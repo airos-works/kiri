@@ -16,14 +16,14 @@ crash recovery, image previews and a 200 MiB document. See the
 <!-- airos-ci:latest-builds:start -->
 ## Latest builds
 
-Built automatically by air/OS CI from commit `80b40d7` on 2026-10-05 ([all files](https://github.com/jmgasper/kiri/releases/tag/latest)).
+Built automatically by air/OS CI from commit `f6f740a` on 2026-10-20 ([all files](https://github.com/jmgasper/kiri/releases/tag/latest)).
 
 | Architecture | Package |
 |---|---|
 | arm64 | [kiri-0.0.2.alpha-1-arm64.hpkg](https://github.com/jmgasper/kiri/releases/download/latest/kiri-0.0.2.alpha-1-arm64.hpkg) |
 | x86_64 | [kiri-0.0.2.alpha-1-x86_64.hpkg](https://github.com/jmgasper/kiri/releases/download/latest/kiri-0.0.2.alpha-1-x86_64.hpkg) |
 
-Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60206-669-g9dc439ceeb, arm64 hrev60206-669-g9dc439ceeb.
+Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-1733-g3e7f3a491b, arm64 hrev60207-1733-g3e7f3a491b.
 <!-- airos-ci:latest-builds:end -->
 
 ## Install or build
