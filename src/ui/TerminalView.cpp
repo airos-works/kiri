@@ -7,7 +7,20 @@
 #include <Window.h>
 #include <algorithm>
 #include <cmath>
+#include <vector>
 namespace kiri {
+namespace {
+// Whether a cell beginning with code continues the emoji sequence in codes:
+// libvterm puts skin tones, the second letter of a flag and emoji after a
+// zero width joiner in cells of their own, but the font joins them.
+bool JoinsEmoji(const std::vector<uint32_t>& codes,uint32_t code)
+{
+    auto regional=[](uint32_t c){return c>=0x1f1e6 && c<=0x1f1ff;};
+    if(code==0xfe0f || code==0x20e3 || (code>=0x1f3fb && code<=0x1f3ff) || (code>=0xe0020 && code<=0xe007f)) return true;
+    if(codes.back()==0x200d) return true;
+    return codes.size()==1 && regional(codes[0]) && regional(code);
+}
+}
 TerminalView::TerminalView():BView("terminal",B_WILL_DRAW|B_FRAME_EVENTS|B_NAVIGABLE) {
     SetExplicitMinSize(BSize(180,80));
     BFont font(be_fixed_font);font.SetSize(12);SetFont(&font);
@@ -75,7 +88,11 @@ void TerminalView::Draw(BRect update) {
     SetHighColor(fTheme.terminalBackground);FillRect(update);
     int first=std::max(0,static_cast<int>((update.top-6)/fCellHeight));
     int last=std::min(fModel.Rows()-1,static_cast<int>((update.bottom-6)/fCellHeight));
+    // Text drawn after the row's backgrounds: an emoji may be wider than its cells
+    struct Run { std::string text; BPoint where; rgb_color color,background; bool underline; float right; };
+    std::vector<Run> runs;
     for(int row=first;row<=last;++row) {
+        runs.clear();
         for(int col=0;col<fModel.Columns();++col) {
             auto cell=fModel.Cell(row,col,fScrollOffset);
             VTermColor fg=cell.fg,bg=cell.bg;
@@ -86,10 +103,24 @@ void TerminalView::Draw(BRect update) {
             BRect rect(8+col*fCellWidth,6+row*fCellHeight,8+(col+std::max(1,int(cell.width)))*fCellWidth-1,6+(row+1)*fCellHeight-1);
             if(cell.chars[0]==UINT32_MAX) continue;
             SetHighColor(background);FillRect(rect);SetLowColor(background);SetHighColor(foreground);
-            std::string text;
-            for(auto c:cell.chars) { if(!c) break;if(c!=UINT32_MAX) text+=UTF8(c); }
-            if(!cell.attrs.conceal && !text.empty()) DrawString(text.c_str(),BPoint(rect.left,rect.top+fAscent));
-            if(cell.attrs.underline) StrokeLine(BPoint(rect.left,rect.bottom-2),BPoint(rect.right,rect.bottom-2));
+            std::string text;std::vector<uint32_t> codes;
+            for(auto c:cell.chars) { if(!c) break;if(c!=UINT32_MAX) {text+=UTF8(c);codes.push_back(c);} }
+            // An emoji sequence over several cells is drawn as one glyph
+            for(int next=col+std::max(1,int(cell.width));next<fModel.Columns() && !codes.empty() && codes.size()<16;) {
+                auto following=fModel.Cell(row,next,fScrollOffset);
+                if(!following.chars[0] || following.chars[0]==UINT32_MAX || !JoinsEmoji(codes,following.chars[0])) break;
+                int width=std::max(1,int(following.width));
+                rect.right=8+(next+width)*fCellWidth-1;
+                SetHighColor(background);FillRect(rect);SetHighColor(foreground);
+                for(auto c:following.chars) { if(!c) break;if(c!=UINT32_MAX) {text+=UTF8(c);codes.push_back(c);} }
+                col=next+width-1;next+=width;
+            }
+            runs.push_back({cell.attrs.conceal?std::string():text,BPoint(rect.left,rect.top+fAscent),foreground,background,bool(cell.attrs.underline),rect.right});
+        }
+        for(const auto& run:runs) {
+            SetHighColor(run.color);SetLowColor(run.background);
+            if(!run.text.empty()) DrawString(run.text.c_str(),run.where);
+            if(run.underline) StrokeLine(BPoint(run.where.x,run.where.y-fAscent+fCellHeight-3),BPoint(run.right,run.where.y-fAscent+fCellHeight-3));
         }
     }
     if(fScrollOffset==0 && fModel.CursorVisible()) {
