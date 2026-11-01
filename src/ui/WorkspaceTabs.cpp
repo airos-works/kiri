@@ -83,6 +83,8 @@ Workspace* Workspace::DetachTab(int64 id,BPoint screenPoint) {
     if(window->fPreviewTabs!=fPreviewTabs) { BMessage preview(kPreviewTabs);window->MessageReceived(&preview); }
     window->ResizeTo(std::min(Frame().Width(),950.f),std::min(Frame().Height(),700.f));
     window->MoveTo(screenPoint-BPoint(80,50));window->MoveOnScreen();
+    // A detached window keeps its panes hidden and starts a shell on demand.
+    window->fProjectPanesDeferred=false;
     if(!fProject.empty()) window->OpenProject(fProject);
     window->fSidebarSplit->SetItemCollapsed(0,true);window->fTerminalSplit->SetItemCollapsed(1,true);
     CancelCompletion();

@@ -1,5 +1,42 @@
 # Verification record
 
+## Editor-only new files — develop
+
+Verified November 2, 2026 on the X399 workstation (air/OS x86_64,
+hrev60207+2114), for issue [#3](https://github.com/airos-works/kiri/issues/3),
+with a recheck of [#1](https://github.com/airos-works/kiri/issues/1) and
+[#2](https://github.com/airos-works/kiri/issues/2) on that build.
+
+A window that starts without a project (**New File** from the launcher, or a
+single file from Tracker or the command line) shows only the editor: the
+Files pane is collapsed and no shell is started. Opening a folder in that
+window shows the Files pane and starts a terminal in the project, once; after
+that, project changes keep whatever the user has shown or hidden. **Show /
+Hide Files** and **Show / Hide Terminal** work at any time. Detached tab
+windows no longer start a hidden shell.
+
+In the launcher smoke application with fresh settings, **New File** opened a
+window with only the editor and status bar. Opening the Kiri source folder in
+that window showed the Files pane at its usual width and a terminal in the
+project. The `kiri_workspace_tests --project-panes` suite (14 checks) covers
+new and single files, the first project, later project changes with both
+panes hidden, showing the terminal on demand, and a window that opens a
+project directly.
+
+`make check check-native check-language check-workspace check-markdown-native`
+passed: 85 Markdown, 169 core, 94 search/edit, 3,761 refresh/diff, 82
+analysis/theme, 373 native editor/worker, 84 language, 987 workspace and 183
+native Markdown checks.
+
+Issue #1 recheck: with a local file open, `/Documents` on the SMB share was
+opened, then a Markdown file from the share; it opened at once while the
+share was still being indexed, and the application quit in 90 ms. Issue #2
+recheck: `BMimeType::GetSupportingApps` lists Kiri for `text/plain`,
+`text/markdown`, `text/html`, `text/css`, `text/xml`, `text/x-source-code`,
+`text/x-c++src`, `text/x-java`, `application/json`, `application/javascript`,
+`application/typescript`, `application/x-python`, `application/x-ruby`,
+`application/x-sh`, `application/x-yaml` and `application/xml`.
+
 ## Large network folders and text file types — develop (0.0.2 alpha)
 
 Verified September 30, 2026 on Linux, in the Haiku R1/beta5 QEMU VM and on the

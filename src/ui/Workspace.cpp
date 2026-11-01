@@ -281,7 +281,9 @@ Workspace::Workspace(const std::string& settingsDirectory,bool restoreSession,co
     menu->FindItem(kPreviewTabs)->SetMarked(fPreviewTabs);
     BMessage pulse(kPulse);fPulse=std::make_unique<BMessageRunner>(BMessenger(this),&pulse,2000000);
     BMessage languages(kLanguageTick);fLanguageTimer=std::make_unique<BMessageRunner>(BMessenger(this),&languages,150000);
-    if(fTerminal->Empty()) NewTerminal(false);
+    if(fProject.empty()) {
+        fProjectPanesDeferred=true;fSidebarSplit->SetItemCollapsed(0,true);fTerminalSplit->SetItemCollapsed(1,true);
+    } else if(fTerminal->Empty()) NewTerminal(false);
     BMessage opened(kWorkspaceOpened);opened.AddMessenger("workspace",BMessenger(this));be_app->PostMessage(&opened);
 }
 Workspace::~Workspace() {
@@ -406,6 +408,10 @@ void Workspace::OpenProject(const std::string& input) {
         };
     },"project");
     RefreshIndex();
+    if(fProjectPanesDeferred) {
+        fProjectPanesDeferred=false;fSidebarSplit->SetItemCollapsed(0,false);
+        if(fTerminal->Empty()) { NewTerminal(false);return; }
+    }
     // A project change gets a fresh shell without interrupting existing tabs.
     if(changed && !fTerminal->Empty()) NewTerminal(fTerminal->OwnsFocus());
 }

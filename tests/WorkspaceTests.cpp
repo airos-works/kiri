@@ -612,6 +612,30 @@ struct WorkspaceTestAccess {
         view->LoadCommitFile(0);view->SetRepository(other);CHECK(!view->fDiff->Model());Wait(*w,[&]{return !view->fHistoryBusy;});CHECK(!view->fDiff->Model());
         CHECK(status==run({"status","--porcelain=v1","-z"}));w->Quit();
     }
+    static void ProjectPanes(const std::string& base) {
+        auto root=base+"/panes-project",settings=base+"/panes-settings",file=base+"/panes-single.txt";
+        fs::create_directories(root);fs::create_directories(base+"/panes-other");std::ofstream(root+"/a.txt")<<"a\n";std::ofstream(file)<<"single\n";
+        // Split views report collapsed items as of their last layout.
+        auto filesHidden=[](Workspace& w){w.Layout(false);return w.fSidebarSplit->IsItemCollapsed(0);};
+        auto terminalHidden=[](Workspace& w){w.Layout(false);return w.fTerminalSplit->IsItemCollapsed(1);};
+        // A new file from the launcher shows only the editor (issue #3).
+        auto* w=new Workspace(settings,false);w->Show();CHECK(w->Lock());
+        CHECK(filesHidden(*w));CHECK(terminalHidden(*w));CHECK(w->fTerminal->Empty());
+        Send(*w,kNewFile);CHECK(w->fDocuments.size()==1);CHECK(filesHidden(*w) && terminalHidden(*w) && w->fTerminal->Empty());
+        Open(*w,file);CHECK(filesHidden(*w) && terminalHidden(*w) && w->fTerminal->Empty());
+        // Opening a project brings in the Files pane and a shell in the project.
+        w->OpenProject(root);CHECK(!filesHidden(*w) && !terminalHidden(*w) && !w->fTerminal->Empty());
+        Wait(*w,[&]{return w->fExplorer->FullListCountItems()>=1;});
+        // Later project changes keep the user's pane choices.
+        Send(*w,kToggleSidebar);w->fTerminal->CloseTerminals();w->FinishTerminalClose();CHECK(filesHidden(*w) && terminalHidden(*w));
+        w->OpenProject(base+"/panes-other");CHECK(filesHidden(*w) && terminalHidden(*w) && w->fTerminal->Empty());
+        // The terminal can still be shown on demand.
+        Send(*w,kToggleTerminal);CHECK(!terminalHidden(*w) && !w->fTerminal->Empty());
+        w->Quit();
+        // A window that opens a project keeps the full layout.
+        w=new Workspace(settings+"-2",false);w->OpenProject(root);w->Show();CHECK(w->Lock());
+        CHECK(!filesHidden(*w) && !terminalHidden(*w) && !w->fTerminal->Empty());w->Quit();
+    }
     // Opening a large or slow folder (#1): a project walk blocked in the kernel,
     // as on an unresponsive network volume, must not delay the tree, the
     // repository check, opening files or closing the window.
@@ -909,6 +933,6 @@ int main(int argc,char** argv) {
     }
     BApplication application("application/x-vnd.Kiri-workspace-unit-tests");
     char folder[]="/tmp/kiri-workspace-XXXXXX";auto* root=mkdtemp(folder);if(!root) return 1;
-    try { if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
+    try { if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
     catch(const std::exception& error) { std::cerr<<error.what()<<" (test files: "<<root<<")\n";return 1; }
 }

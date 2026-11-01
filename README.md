@@ -66,6 +66,9 @@ The list persists across restarts and initially includes the previous session.
 Unavailable items can be removed from the list without deleting files.
 
 Choosing the previous project restores its saved tabs and editor positions.
+**New File**, or a single file opened without a folder, shows just the editor:
+the Files pane and terminal stay hidden until you open a folder, and
+**View → Show / Hide Files** or **Show / Hide Terminal** brings either in sooner.
 Opening a file or folder from Tracker or the command line goes straight to the
 workspace. To open a project from Tracker, right-click its folder and choose
 **Open with → Kiri**. Kiri is offered in **Open with** for every `text/*` type

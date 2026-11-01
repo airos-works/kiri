@@ -283,6 +283,9 @@ private:
     std::vector<std::string> fRestorePaths;
     int fRestoringDrafts=0;
     bool fRestoring=false,fRestoreFilesStarted=false;
+    // A window without a project (a new or single file) shows only the editor.
+    // The Files pane and the first terminal appear when a project is opened.
+    bool fProjectPanesDeferred=false;
     Explorer* fExplorer;
     GitView* fGit;
     TerminalPanel* fTerminal;
