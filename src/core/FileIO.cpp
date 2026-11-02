@@ -9,6 +9,7 @@
 #include <unistd.h>
 #ifdef __HAIKU__
 #include <fs_attr.h>
+#include <fs_info.h>
 #include <dirent.h>
 #endif
 
@@ -39,7 +40,15 @@ FileStamp Stamp(const struct stat& s) {
 }
 std::string Error(const char* action) { return std::string(action)+": "+strerror(errno); }
 #ifdef __HAIKU__
+// A volume that cannot store attributes (an SMB share, for one) may still show
+// some it makes up, such as a MIME type from the file's name. Those are not the
+// file's to keep, and writing them back fails as a read-only file system.
+bool StoresAttributes(int fd) {
+    struct stat s{};fs_info info{};
+    return fstat(fd,&s)!=0 || fs_stat_dev(s.st_dev,&info)!=0 || (info.flags&B_FS_HAS_ATTR)!=0;
+}
 bool CopyAttributes(int source, int target) {
+    if (!StoresAttributes(target)) return true;
     DIR* attrs=fs_fopen_attr_dir(source);
     if (!attrs) return false;
     bool ok=true;
@@ -129,6 +138,30 @@ FileData ReadFile(const std::string& path, const std::atomic<bool>* cancel, size
     data.utf8=validator.Complete();
     return data;
 }
+namespace {
+std::string WriteParts(int fd,const std::vector<std::string_view>& parts) {
+    for(auto bytes:parts) {
+        size_t offset=0;
+        while (offset<bytes.size()) {
+            ssize_t n=write(fd,bytes.data()+offset,std::min<size_t>(1024*1024,bytes.size()-offset));
+            if (n>0) offset+=n;
+            else if (n<0 && errno==EINTR) continue;
+            else return Error("Cannot write file");
+        }
+    }
+    return {};
+}
+std::string OverwriteInPlace(const std::string& path,const std::vector<std::string_view>& parts,const FileStamp& expected) {
+    if (!expected.exists) return "Cannot replace file: it is in use.";
+    int fd=open(path.c_str(),O_WRONLY|O_TRUNC|O_CLOEXEC);
+    if (fd<0) return Error("Cannot replace file");
+    std::string error=WriteParts(fd,parts);
+    if (error.empty() && fsync(fd)!=0) error=Error("Cannot flush file");
+    if (close(fd)!=0 && error.empty()) error=Error("Cannot close file");
+    if (!error.empty()) error+=". The file may be incomplete: your edits are still in the editor.";
+    return error;
+}
+}
 std::string SaveFile(const std::string& inputPath, std::string_view bytes, const FileStamp& expected) {
     return SaveFileParts(inputPath,{bytes},expected);
 }
@@ -153,21 +186,19 @@ std::string SaveFileParts(const std::string& inputPath,const std::vector<std::st
 #ifdef __HAIKU__
     if (old>=0 && error.empty() && !CopyAttributes(old,fd)) error=Error("Cannot preserve file attributes");
 #endif
-    for(auto bytes:parts) {
-      size_t offset=0;
-      while (error.empty() && offset<bytes.size()) {
-        ssize_t n=write(fd,bytes.data()+offset,std::min<size_t>(1024*1024,bytes.size()-offset));
-        if (n>0) offset+=n;
-        else if (n<0 && errno==EINTR) continue;
-        else error=Error("Cannot write file");
-      }
-    }
+    if (error.empty()) error=WriteParts(fd,parts);
     if (error.empty() && fsync(fd)!=0) error=Error("Cannot flush file");
     if (close(fd)!=0 && error.empty()) error=Error("Cannot close file");
     if (error.empty() && StatFile(path)!=expected) error="The file changed during save. Your edits are still in the editor.";
-    if (error.empty() && rename(name.c_str(),path.c_str())!=0) error=Error("Cannot replace file");
-    if (!error.empty()) unlink(name.c_str());
-    if (old>=0) close(old);
+    // An SMB server does not replace a file that is open, ours included.
+    if (old>=0) { close(old);old=-1; }
+    if (error.empty() && rename(name.c_str(),path.c_str())!=0) {
+        // Somebody else has it open (Tracker reading its icon, a viewer).
+        // Writing over it in place is what other editors do, and still saves.
+        if (errno==EACCES || errno==EPERM || errno==EBUSY) error=OverwriteInPlace(path,parts,expected);
+        else error=Error("Cannot replace file");
+        unlink(name.c_str());
+    } else if (!error.empty()) unlink(name.c_str());
     if (error.empty()) {
         auto parent=std::filesystem::path(path).parent_path().string();
         int directory=open(parent.c_str(),O_RDONLY|O_CLOEXEC);
