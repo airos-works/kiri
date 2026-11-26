@@ -135,6 +135,21 @@ void GitIntegration() {
     auto found=QuickOpen(index,"rwn");CHECK(!found.empty());
     auto search=SearchProject(t.path,index,"three",true);CHECK(search.matches.size()==1);CHECK(search.matches[0].line==4);
 }
+// Open Quickly folds non-ASCII case too, still preferring the exact case (#37).
+void QuickOpenCase() {
+    CHECK(FuzzyScore("école","École.txt")>-1000000);CHECK(FuzzyScore("ÉCOLE","école.txt")>-1000000);
+    CHECK(FuzzyScore("école","école.txt")>FuzzyScore("école","École.txt"));
+    CHECK(FuzzyScore("αθήνα","Αθήνα.md")>-1000000);CHECK(FuzzyScore("ΑΘΉΝΑ","αθήνα.md")>-1000000);CHECK(FuzzyScore("σ","Σ.md")>-1000000);
+    CHECK(FuzzyScore("ПРИВЕТ","привет.txt")>-1000000);CHECK(FuzzyScore("żółw","ŻÓŁW.txt")>-1000000);CHECK(FuzzyScore("ẞ","ß")<=-1000000);
+    CHECK(FuzzyScore("e","é")<=-1000000);CHECK(FuzzyScore("rdme","README.md")>-1000000);
+    ProjectIndex index;index.paths={"docs/École.txt","src/ecole.cpp","Ελλάδα/Αθήνα.md"};
+    auto found=QuickOpen(index,"école");CHECK(found.size()==1 && found[0]=="docs/École.txt");
+    found=QuickOpen(index,"αθ");CHECK(found.size()==1 && found[0]=="Ελλάδα/Αθήνα.md");
+    // The common ASCII path index stays fast.
+    ProjectIndex large;for(int i=0;i<200000;++i) large.paths.push_back("src/module"+std::to_string(i%97)+"/source_file_"+std::to_string(i)+".cpp");
+    auto began=std::chrono::steady_clock::now();found=QuickOpen(large,"m42sf999");CHECK(!found.empty());
+    CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
+}
 void Terminal() {
     TerminalModel model(3,20,5);
     std::string data="hello\r\n\x1b[31mred\x1b[0m";model.Feed(data.data(),data.size());
@@ -188,7 +203,7 @@ void TerminalIsolation() {
 }
 int main() {
     signal(SIGPIPE,SIG_IGN);
-    try { Processes();Files();LinksAndGraph();GitIntegration();Terminal();TerminalIsolation();Recovery(); }
+    try { Processes();Files();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalIsolation();Recovery(); }
     catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
     std::cout<<"Passed "<<checks<<" checks: processes, safe saves, Git, project search and real PTY terminal.\n";
 }

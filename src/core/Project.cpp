@@ -94,18 +94,58 @@ ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* canc
     }
     return result;
 }
+namespace {
+// One code point from UTF-8; a malformed byte stands for itself.
+uint32_t NextCharacter(const std::string& text,size_t& at) {
+    unsigned char c=text[at++];
+    if(c<0x80) return c;
+    size_t length=c>=0xf0?3:c>=0xe0?2:c>=0xc0?1:0;
+    if(!length || at+length>text.size()) return c;
+    uint32_t value=c&(0x3f>>length);
+    for(size_t i=0;i<length;++i) {
+        unsigned char next=text[at+i];if((next&0xc0)!=0x80) return c;
+        value=(value<<6)|(next&0x3f);
+    }
+    at+=length;return value;
+}
+// Simple case folding for the scripts file names commonly use: Latin
+// (including Latin-1, Extended-A and Extended Additional), Greek and Cyrillic.
+uint32_t FoldCase(uint32_t c) {
+    if(c<0x80) return c>='A' && c<='Z'?c+32:c;
+    if((c>=0xc0 && c<=0xde && c!=0xd7)) return c+32;
+    if(c>=0x100 && c<=0x17f) {
+        if(c==0x130) return 'i';
+        if(c==0x178) return 0xff;
+        if((c>=0x139 && c<=0x148) || (c>=0x179 && c<=0x17e)) return c&1?c+1:c;
+        if(c!=0x138 && c!=0x149 && c!=0x17f) return c&1?c:c+1;
+        return c;
+    }
+    if(c==0x386) return 0x3ac;
+    if(c>=0x388 && c<=0x38a) return c+37;
+    if(c==0x38c) return 0x3cc;
+    if(c==0x38e || c==0x38f) return c+63;
+    if(c>=0x391 && c<=0x3ab && c!=0x3a2) return c+32;
+    if(c==0x3c2) return 0x3c3;
+    if(c>=0x400 && c<=0x40f) return c+80;
+    if(c>=0x410 && c<=0x42f) return c+32;
+    if(((c>=0x460 && c<=0x481) || (c>=0x48a && c<=0x4bf) || (c>=0x4d0 && c<=0x52f)) && !(c&1)) return c+1;
+    if(c>=0x1e00 && c<=0x1eff && !(c>=0x1e96 && c<=0x1e9f) && !(c&1)) return c+1;
+    return c;
+}
+}
 int FuzzyScore(const std::string& query, const std::string& path) {
     if(query.empty()) return -static_cast<int>(path.size());
-    size_t pos=0;int score=0;int previous=-2;
-    for(unsigned char q:query) {
-        bool found=false;
-        for(;pos<path.size();++pos) {
-            if(std::tolower(static_cast<unsigned char>(path[pos]))!=std::tolower(q)) continue;
+    size_t pos=0,previousEnd=SIZE_MAX;int score=0;
+    for(size_t q=0;q<query.size();) {
+        auto wanted=NextCharacter(query,q),folded=FoldCase(wanted);bool found=false;
+        while(pos<path.size()) {
+            auto start=pos;auto c=NextCharacter(path,pos);
+            if(c!=wanted && FoldCase(c)!=folded) continue;
             score+=10;
-            if(static_cast<int>(pos)==previous+1) score+=12;
-            if(pos==0 || path[pos-1]=='/' || path[pos-1]=='_' || path[pos-1]=='-') score+=20;
-            if(path[pos]==q) score+=2;
-            previous=static_cast<int>(pos++);found=true;break;
+            if(start==previousEnd) score+=12;
+            if(start==0 || path[start-1]=='/' || path[start-1]=='_' || path[start-1]=='-') score+=20;
+            if(c==wanted) score+=2;
+            previousEnd=pos;found=true;break;
         }
         if(!found) return -1000000;
     }
