@@ -50,10 +50,11 @@ private:BMessenger fTarget;int64 fDocument,fSerial;std::string fBackups;DiffView
 void Workspace::UpdateExternalBar() {
     auto* d=Current();bool visible=d && d->external;
     if(visible) {
+        bool preview=d->editor && d->editor->SendMessage(SCI_GETREADONLY);
         auto message=d->externalBusy?"Reading disk changes and preserving both versions…":d->externalChange && !d->externalChange->error.empty()?d->externalChange->error:
-            !d->externalObserved.exists?"File removed or moved on disk. The editor text is preserved.":"File changed on disk. Compare, reload, or keep your edits.";
+            !d->externalObserved.exists?(preview?"File removed or moved on disk. Close this preview when you are done with it.":"File removed or moved on disk. The editor text is preserved."):"File changed on disk. Compare, reload, or keep your edits.";
         fExternalStatus->SetText(message.c_str());fExternalStatus->SetToolTip(message.c_str());
-        bool ready=!d->externalBusy;fExternalCompare->SetEnabled(ready && d->editor);fExternalReload->SetEnabled(ready && d->externalObserved.exists);fExternalKeep->SetEnabled(ready && d->editor);
+        bool ready=!d->externalBusy;fExternalCompare->SetEnabled(ready && d->editor && !preview);fExternalReload->SetEnabled(ready && d->externalObserved.exists);fExternalKeep->SetEnabled(ready && d->editor && !preview);
     }
     if(visible && fExternalBar->IsHidden()) fExternalBar->Show();else if(!visible && !fExternalBar->IsHidden()) fExternalBar->Hide();
 }
@@ -72,7 +73,11 @@ void Workspace::CheckExternalFiles() {
                 if(file.current==d->stamp) continue;
                 if(d->external && d->externalObserved==file.current && d->externalChange && d->externalChange->diskStamp==file.current) continue;
                 d->external=true;d->externalObserved=file.current;
+                bool preview=d->editor && d->editor->SendMessage(SCI_GETREADONLY);
                 if(d->editor && !d->editor->Dirty() && file.current.exists) ReloadExternal(*d);
+                // A removed read-only preview shows nothing worth keeping: it
+                // stays clean, so it closes without Save and is never a draft.
+                else if(preview) continue;
                 else if(d->editor) { if(!file.current.exists && !d->editor->Dirty()) d->editor->MarkRecovered();CaptureExternal(*d); }
                 else if(file.current.exists) ReloadImage(*d);
             }
@@ -169,6 +174,7 @@ void Workspace::ResolveExternal(BMessage& message) {
     if(!d || !d->external || d->externalBusy || d->saving || EditPathBusy(d->path)) return;
     if(hasSerial && serial!=d->externalSerial) return;
     if(!d->editor) { if(message.what==kExternalReload) ReloadImage(*d);return; }
+    if(d->editor->SendMessage(SCI_GETREADONLY)) { if(message.what==kExternalReload && StatFile(d->path).exists) ReloadExternal(*d);return; }
     auto snapshot=d->externalChange;
     if(!snapshot || !snapshot->error.empty() || snapshot->revision!=d->editor->InputRevision() || snapshot->diskStamp!=StatFile(d->path)) { CaptureExternal(*d,message.what);return; }
     if(message.what==kExternalCompare) {

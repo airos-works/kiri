@@ -779,7 +779,8 @@ void Workspace::RestoreDraft(const std::string& file) {
 void Workspace::StartRecovery() {
     if(fSnapshot || !fRecoveryJobs || fRestoring) return;
     for(auto& d:fDocuments) {
-        if(!d->editor || !d->editor->Dirty() || d->saving || d->recovering || d->recoveryRevision==d->editor->Revision() || system_time()-d->lastRecovery<10000000) continue;
+        // A read-only preview (a binary file's hex dump) has no text to recover.
+        if(!d->editor || !d->editor->Dirty() || d->editor->SendMessage(SCI_GETREADONLY) || d->saving || d->recovering || d->recoveryRevision==d->editor->Revision() || system_time()-d->lastRecovery<10000000) continue;
         if(d->recoveryFile.empty()) d->recoveryFile=fRecoveryDirectory+"/"+fSessionToken+"-"+std::to_string(d->id)+".draft";
         auto draft=std::make_shared<Draft>();draft->path=d->path;draft->name=d->name;draft->base=d->stamp;draft->bom=d->bom;draft->eol=d->editor->SendMessage(SCI_GETEOLMODE);
         draft->caret=d->editor->SendMessage(SCI_GETCURRENTPOS);draft->anchor=d->editor->SendMessage(SCI_GETANCHOR);draft->firstLine=d->editor->SendMessage(SCI_GETFIRSTVISIBLELINE);
@@ -984,7 +985,13 @@ void Workspace::MessageReceived(BMessage* message) {
         case kEditorChanged:case kEditorPosition: {
             void* source=nullptr;message->FindPointer("editor",&source);
             if(message->what==kEditorChanged) {
-                if(auto* document=ByEditor(source)) ++document->revision;
+                if(auto* document=ByEditor(source)) {
+                    ++document->revision;
+                    // Undo back to the saved text: the last draft (or one being
+                    // written) no longer holds unsaved work, so retire it.
+                    if(document->editor && !document->editor->Dirty() && !document->saving
+                        && (document->recoveryRevision!=-1 || document->recovering || (fSnapshot && fSnapshot->id==document->id))) ClearRecovery(*document);
+                }
                 UpdateTabs();
             } else if(editor==source) {
                 UpdateStatus();if(editor) fSymbolBar->SetPosition(editor->SendMessage(SCI_GETCURRENTPOS));
