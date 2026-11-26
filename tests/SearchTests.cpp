@@ -1,5 +1,6 @@
 #include "core/EditTransaction.h"
 #include "core/Process.h"
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -65,6 +66,13 @@ static void ProjectQueries() {
     options.query="[";CHECK(!SearchProject(temp.path,all,options).error.empty());
     options.include="src/**/*.ts";options.query="name";CHECK(SearchProject(temp.path,all,options).matches.size()==2);options.include="**/*.ts";
     options.query="name";options.folders="src;tests";CHECK(SearchProject(temp.path,all,options).matches.size()==3);
+    // Columns count Unicode characters and are computed in one pass per line (#12).
+    Write(temp.path+"/columns.txt","é😀x ab😀x\nx");ProjectIndex columns;columns.paths={"columns.txt"};ProjectSearchOptions x;x.query="x";x.matchCase=true;
+    result=SearchProject(temp.path,columns,x);CHECK(result.matches.size()==3);CHECK(result.matches[0].column==3);CHECK(result.matches[1].column==8);CHECK(result.matches[2].column==1);CHECK(result.matches[2].line==2);
+    std::string dense;for(int i=0;i<10000;++i) dense+=std::string(127,'-')+"x";Write(temp.path+"/dense.txt",dense);columns.paths={"dense.txt"};
+    auto began=std::chrono::steady_clock::now();result=SearchProject(temp.path,columns,x,nullptr,20000);
+    CHECK(result.matches.size()==10000);CHECK(result.matches.back().column==1280000);
+    CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(1));
     // The file system root is a valid project folder (#10).
     ProjectIndex rooted;rooted.paths={temp.path.substr(1)+"/tests/a.ts"};ProjectSearchOptions plain;plain.query="name";
     result=SearchProject("/",rooted,plain);CHECK(result.matches.size()==1);CHECK(result.symlinks==0);

@@ -203,14 +203,19 @@ SearchResult SearchProject(const std::string& root,const ProjectIndex& index,con
             auto end=data.bytes.find_first_of("\r\n",start);if(end==std::string::npos) end=data.bytes.size();
             auto found=query.Find(data.bytes,start,end,limit-result.matches.size(),cancel,replacement);
             if(!found.error.empty()) { result.error=relative+": "+found.error;result.matches.clear();result.snapshots.clear();return result; }
+            // Columns advance with the matches: each byte of the line is
+            // decoded once however many matches it holds (valid UTF-8 here).
+            size_t columnByte=start,column=1;
             for(auto& match:found.matches) {
+                if(cancel && (result.matches.size()&1023)==0 && cancel->load()) { result.cancelled=true;break; }
+                for(;columnByte<match.start;++columnByte) column+=(static_cast<unsigned char>(data.bytes[columnByte])&0xc0)!=0x80;
                 auto begin=match.start>start+120?match.start-120:start;
                 while(begin>start && (static_cast<unsigned char>(data.bytes[begin])&0xc0)==0x80) --begin;
                 auto excerptEnd=std::min(end,begin+400);
                 while(excerptEnd<end && (static_cast<unsigned char>(data.bytes[excerptEnd])&0xc0)==0x80) ++excerptEnd;
-                auto column=PositionAt(std::string_view(data.bytes).substr(start,end-start),match.start-start,PositionEncoding::UTF32).character+1;
                 result.matches.push_back({relative,data.bytes.substr(begin,excerptEnd-begin),line,column,match.start,match.end,std::move(match.text)});
             }
+            if(result.cancelled) break;
             if(found.truncated) { result.truncated=true;break; }
             if(found.cancelled) { result.cancelled=true;break; }
             if(end==data.bytes.size()) break;
