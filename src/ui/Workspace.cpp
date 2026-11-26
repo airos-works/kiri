@@ -476,18 +476,36 @@ void Workspace::DrainJobs() {
 }
 void Workspace::OpenFile(const std::string& input,size_t line,size_t column,bool activate,bool preview,int64 paneID,bool focusEditor) {
     if(fApplyingEdit || EditPathBusy(input)) { Notice("Wait for the project edit to finish before opening this file.");return; }
-    auto path=CanonicalPath(input);auto* pane=paneID?FindPane(paneID):fActivePane;if(!pane) return;paneID=pane->id;
-    if(fRestoring && fRestoringDrafts) { if(std::find(fRestorePaths.begin(),fRestorePaths.end(),path)==fRestorePaths.end()) fRestorePaths.push_back(path);return; }
+    auto* pane=paneID?FindPane(paneID):fActivePane;if(!pane) return;paneID=pane->id;
+    if(fRestoring && fRestoringDrafts) { if(std::find(fRestorePaths.begin(),fRestorePaths.end(),input)==fRestorePaths.end()) fRestorePaths.push_back(input);return; }
     preview=preview && fPreviewTabs;PromotePreviews();
     auto paneSerial=++pane->openSerial;auto focus=activate?++fFocusSerial:0;
-    for(auto& document:fDocuments) if(document->path==path) {
-        auto* d=document.get();
-        if(activate) RememberRecent(path,false);
-        if(activate && !preview && d->external && d->editor) {
-            BMessage compare(kExternalCompare);compare.AddInt64("document",d->id);ResolveExternal(compare);
-        }
-        ShowDocument(*pane,*d,line,column,preview,activate,focusEditor);SaveSettings();return;
+    // Activating an open document by its own path reads no metadata.
+    for(auto& document:fDocuments) if(document->path==input) { ActivateOpen(*pane,*document,line,column,activate,preview,focusEditor);return; }
+    // Resolving the path and its size can stall on a slow or unreachable
+    // volume: do it on a worker, then continue here (the loader for the
+    // file's size is created by this window's editor factory).
+    ++fResolvingOpens;
+    fJobs->Submit([this,input,line,column,activate,preview,paneID,focusEditor,paneSerial,focus](const auto&) {
+        auto path=CanonicalPath(input);auto size=StatFile(path).size;
+        return [this,path,size,line,column,activate,preview,paneID,focusEditor,paneSerial,focus] {
+            --fResolvingOpens;auto* pane=FindPane(paneID);
+            if(pane && (!preview || pane->openSerial==paneSerial)) OpenResolved(path,size,line,column,activate,preview,paneID,focusEditor,paneSerial,focus);
+            else FinishRestore();
+        };
+    },{},[this](const std::string& error){--fResolvingOpens;Notice("Open failed: "+error);FinishRestore();});
+}
+void Workspace::ActivateOpen(Pane& pane,Document& document,size_t line,size_t column,bool activate,bool preview,bool focusEditor) {
+    auto* d=&document;
+    if(activate) RememberRecent(d->path,false);
+    if(activate && !preview && d->external && d->editor) {
+        BMessage compare(kExternalCompare);compare.AddInt64("document",d->id);ResolveExternal(compare);
     }
+    ShowDocument(pane,*d,line,column,preview,activate,focusEditor);SaveSettings();
+}
+void Workspace::OpenResolved(const std::string& path,uint64_t size,size_t line,size_t column,bool activate,bool preview,int64 paneID,bool focusEditor,int64 paneSerial,int64 focus) {
+    auto* pane=FindPane(paneID);if(!pane) return;
+    for(auto& document:fDocuments) if(document->path==path) { ActivateOpen(*pane,*document,line,column,activate,preview,focusEditor);FinishRestore();return; }
     if(fPendingOpen.count(path)) {
         fPendingRequests[path].push_back([this,path,line,column,activate,preview,paneID,focusEditor,paneSerial] {
             auto* pane=FindPane(paneID);if(pane && (!preview || pane->openSerial==paneSerial)) OpenFile(path,line,column,activate,preview,paneID,focusEditor);
@@ -495,7 +513,7 @@ void Workspace::OpenFile(const std::string& input,size_t line,size_t column,bool
     }
     fPendingOpen.insert(path);Notice("Opening "+path+"…");
     auto* original=Current();auto originalID=original?original->id:0,originalRevision=original && original->editor?original->editor->InputRevision():0;
-    auto loader=fLoaderFactory->CreateLoader(StatFile(path).size>8*1024*1024);
+    auto loader=fLoaderFactory->CreateLoader(size>8*1024*1024);
     fJobs->Submit([this,path,line,column,loader,activate,preview,paneID,paneSerial,focusEditor,focus,originalID,originalRevision](const auto& cancel) {
         struct Loaded { FileData data;std::shared_ptr<BBitmap> image;DocumentConfig config; };
         auto loaded=std::make_shared<Loaded>();
@@ -513,7 +531,8 @@ void Workspace::OpenFile(const std::string& input,size_t line,size_t column,bool
             auto finish=[&] { for(auto& request:requests) request();FinishRestore();SaveSettings(); };
             auto* pane=FindPane(paneID);
             if(!loaded->data.ok()) {
-                Notice(loaded->data.error);if(!preview) (new BAlert("Open File",loaded->data.error.c_str(),"OK"))->Go();FinishRestore();return;
+                // Restoring a session reports a missing file in the status bar only.
+                Notice(loaded->data.error);if(!preview && activate) (new BAlert("Open File",loaded->data.error.c_str(),"OK"))->Go();FinishRestore();return;
             }
             if(!pane || (preview && pane->openSerial!=paneSerial)) { finish();return; }
             auto d=std::make_unique<Document>();d->id=fNextID++;d->path=path;d->name=fs::path(path).filename().string();d->stamp=loaded->data.stamp;
@@ -722,7 +741,11 @@ void Workspace::CopyPermalink() {
 }
 
 void Workspace::RememberRecent(const std::string& path,bool folder) {
-    if(RecentItems(fSettings).Remember(path,folder)) be_app->PostMessage(kRecentsChanged);
+    // Canonicalizing and syncing the recents file can block on storage: use
+    // the ordered recovery lane, not the window thread.
+    auto remember=[settings=fSettings,path,folder] { if(RecentItems(settings).Remember(path,folder)) be_app->PostMessage(kRecentsChanged); };
+    if(!fRecoveryJobs) { remember();return; }
+    fRecoveryJobs->Submit([remember](const auto&) { remember();return AsyncQueue::Callback{}; });
 }
 void Workspace::RestoreSettings(bool restoreSession) {
     BFile file((fSessionDirectory+"/settings").c_str(),B_READ_ONLY);BMessage settings;
@@ -767,10 +790,10 @@ void Workspace::FinishRestore() {
         fRestoreFilesStarted=true;
         for(const auto& path:fRestorePaths) {
             bool open=false;for(const auto& document:fDocuments) if(document->path==path) open=true;
-            if(!open && StatFile(path).exists) OpenFile(path,0,0,false);
+            if(!open) OpenFile(path,0,0,false); // a missing file fails on the worker, without an alert
         }
     }
-    if(!fPendingOpen.empty()) return;
+    if(!fPendingOpen.empty() || fResolvingOpens) return;
     fRestoring=false;fRestoreDocuments.clear(); // startup state is for startup only
     if(!fFocusSerial && !fRestoreLayout.IsEmpty()) RestoreLayout();
     else if(!fFocusSerial && !fDocuments.empty()) {
@@ -786,11 +809,12 @@ void Workspace::RestoreDraft(const std::string& file) {
         if(!loader->loader) draft.error="Not enough memory to recover this document.";
         else draft=ReadDraft(file,[&](auto chunk){return !cancel && loader->loader->AddData(chunk.data(),chunk.size())==SC_STATUS_OK;});
         auto config=draft.ok()?ReadDocumentConfig(draft.path,&cancel):DocumentConfig{};
-        return [this,file,loader,draft=std::move(draft),config=std::move(config)] {
+        auto disk=draft.ok() && !draft.path.empty()?StatFile(draft.path):FileStamp{};
+        return [this,file,loader,draft=std::move(draft),config=std::move(config),disk] {
             --fRestoringDrafts;
             if(!draft.ok()) { (new BAlert("Document Recovery",(file+"\n\n"+draft.error).c_str(),"OK"))->Go();FinishRestore();return; }
             auto d=std::make_unique<Document>();d->id=fNextID++;d->path=draft.path;d->name=draft.name;d->stamp=draft.base;d->bom=draft.bom;
-            d->recoveryFile=file;d->external=!d->path.empty() && StatFile(d->path)!=d->stamp;
+            d->recoveryFile=file;d->external=!d->path.empty() && disk!=d->stamp;
             d->editor=new Editor();d->view=d->editor;d->editor->Adopt(*loader,draft.eol);d->editor->MarkRecovered();
             d->editor->State()->config=config;
             d->editor->SetLanguage(d->path,d->editor->SendMessage(SCI_GETLENGTH)>8*1024*1024);d->editor->ApplySettings(fEditorSettings);

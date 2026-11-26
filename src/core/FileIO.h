@@ -45,4 +45,8 @@ struct SaveFaults {
     std::function<void(const std::string&)> beforeOverwrite;
 };
 SaveFaults& SaveFaultInjection();
+// Test hook: when set, StatFile and CanonicalPath call it before reading
+// metadata (for example to simulate a slow network volume). Set it only
+// while no other thread is reading metadata.
+std::function<void(const std::string&)>& MetadataProbe();
 }

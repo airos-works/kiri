@@ -288,8 +288,11 @@ void Workspace::ReopenTab() {
             auto* pane=FindPane(paneID);if(!pane) return;
             for(auto& tab:pane->tabs) if(auto* d=ByID(tab->document);d && d->path==closed.path) { tab->preview=false;RestoreView(*tab,closed.state);SaveSettings();return; }
         };
+        // An open file is shown at once; otherwise restore after it has loaded.
+        bool open=std::any_of(fDocuments.begin(),fDocuments.end(),[&](const auto& d){return d->path==closed.path;});
+        if(!open) fPendingRequests[closed.path].push_back(restore);
         OpenFile(closed.path,0,0,true,false,paneID);
-        if(fPendingOpen.count(closed.path)) fPendingRequests[closed.path].push_back(std::move(restore));else restore();return;
+        if(open) restore();return;
     }
     Notice("No saved tabs to reopen.");
 }

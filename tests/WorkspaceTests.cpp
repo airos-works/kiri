@@ -124,7 +124,7 @@ struct WorkspaceTestAccess {
         auto* d=w.Current();throw std::runtime_error("Timed out after check "+std::to_string(checks)+"; "+(d?d->path+" · "+d->languageStatus+" · "+d->diagnosticStatus+" · "+d->semanticStatus+"; version "+std::to_string(d->serverVersion)+" revision "+std::to_string(d->serverRevision)+"/"+std::to_string(d->editor?d->editor->InputRevision():-1):"no document")+"; Problems collapsed="+std::to_string(w.fTerminalSplit->IsItemCollapsed(2))+" hidden="+std::to_string(w.fProblems->IsHidden()));
     }
     static void Open(Workspace& w,const std::string& path,bool preview=false) {
-        w.OpenFile(path,1,1,true,preview);Wait(w,[&]{return w.fPendingOpen.empty();});
+        w.OpenFile(path,1,1,true,preview);Wait(w,[&]{return (w.fPendingOpen.empty() && !w.fResolvingOpens);});
         if(!w.Current() || w.Current()->path!=path) throw std::runtime_error("Open expected "+path+", got "+(w.Current()?w.Current()->path:"no document"));
         CHECK(w.Current() && w.Current()->path==path);
     }
@@ -192,7 +192,7 @@ struct WorkspaceTestAccess {
         // the other pane that still owns the buffer.
         CHECK(w->CloseView(w->CurrentTab()->id,true,false));overrides.indentation=Indentation{false,3,3};overrides.guides=std::vector<int>{70};
         BMessage newer(kApplyDocumentSettings);newer.AddInt64("document",d->id);WriteDocumentOverrides(newer,overrides);w->MessageReceived(&newer);
-        w->ReopenTab();Wait(*w,[&]{return w->Current() && w->Current()->id==d->id && w->fPendingOpen.empty();});
+        w->ReopenTab();Wait(*w,[&]{return w->Current() && w->Current()->id==d->id && (w->fPendingOpen.empty() && !w->fResolvingOpens);});
         CHECK(w->CurrentTab()->editor->SendMessage(SCI_GETINDENT)==3 && w->CurrentTab()->editor->SendMessage(SCI_GETMULTIEDGECOLUMN,0)==70);CHECK(d->editor->Matches(text) && !d->editor->Dirty());w->Quit();
         std::cout<<"EditorConfig typing settings, overrides, shared panes, file refresh, guide persistence and minimap navigation passed.\n";
     }
@@ -226,6 +226,24 @@ struct WorkspaceTestAccess {
         w=new Workspace(settings,true);w->Show();CHECK(w->Lock());Wait(*w,[&]{return !w->fRestoring;});CHECK(w->fEditorSettings.minimap && w->fEditorSettings.indentation.indentWidth==2 && (w->fEditorSettings.guideColumns==std::vector<int>{72,100}));CHECK(w->Current()->editor->Matches("original\n") && w->Current()->editor->Minimap()->Enabled());w->Quit();
         std::cout<<"Editing Defaults validation, Preferences preview/Cancel/Apply, document state and restart passed.\n";
     }
+    // Slow file metadata never stalls the window thread (#35): opening,
+    // reactivating and restoring files read paths and sizes on workers.
+    static void SlowMetadata(const std::string& base) {
+        auto root=base+"/slow-metadata",settings=root+"/settings",slow=root+"/slow";fs::create_directories(slow);
+        auto file=slow+"/a.txt",gone=slow+"/gone.txt";std::ofstream(file)<<"slow volume\n";std::ofstream(gone)<<"soon removed\n";
+        auto* w=new Workspace(settings,false);w->Show();CHECK(w->Lock());
+        MetadataProbe()=[](const std::string& path){if(path.find("/slow/")!=std::string::npos) snooze(300000);};
+        auto began=system_time();w->OpenFile(file);auto held=system_time()-began;CHECK(held<100000);
+        Wait(*w,[&]{return w->fPendingOpen.empty() && !w->fResolvingOpens && w->Current();});CHECK(w->Current()->path==CanonicalPath(file));
+        began=system_time();w->OpenFile(file);CHECK(system_time()-began<100000); // already open: no metadata at all
+        w->OpenFile(gone);Wait(*w,[&]{return w->fPendingOpen.empty() && !w->fResolvingOpens;});CHECK(w->fDocuments.size()==2);
+        w->SaveSettings();w->Quit();fs::remove(gone);
+        // Restoring a session with an unreachable file stays responsive and quiet.
+        began=system_time();w=new Workspace(settings,true);auto constructed=system_time()-began;w->Show();CHECK(w->Lock());CHECK(constructed<300000);
+        Wait(*w,[&]{return !w->fRestoring;});CHECK(w->fDocuments.size()==1);CHECK(w->fDocuments[0]->path==CanonicalPath(file));
+        MetadataProbe()=nullptr;w->Quit();
+        std::cout<<"Slow metadata: open held the window "<<held/1000<<" ms, restore "<<constructed/1000<<" ms.\n";
+    }
     // Opening an open file without a location keeps its caret (#25); the
     // restored session's position applies once, at startup (#26).
     static void OpenLocations(const std::string& base) {
@@ -244,7 +262,7 @@ struct WorkspaceTestAccess {
         editor=w->Current()->editor;CHECK(line(editor)==5);CHECK(w->fRestoreDocuments.empty());
         CHECK(w->CloseView(w->CurrentTab()->id));CHECK(!w->Current());
         BMessage hit(kOpenFile);hit.AddString("path",file.c_str());hit.AddInt64("line",30);hit.AddInt64("column",3);w->MessageReceived(&hit);
-        Wait(*w,[&]{return w->fPendingOpen.empty() && w->Current();});editor=w->Current()->editor;CHECK(line(editor)==30);CHECK(column(editor)==3);w->Quit();
+        Wait(*w,[&]{return (w->fPendingOpen.empty() && !w->fResolvingOpens) && w->Current();});editor=w->Current()->editor;CHECK(line(editor)==30);CHECK(column(editor)==3);w->Quit();
         std::cout<<"Path-only opens keep the caret; restored and explicit locations passed.\n";
     }
     // The status bar's line and column round-trip through Go to Line (#24).
@@ -908,7 +926,7 @@ struct WorkspaceTestAccess {
         // Enter in the query still opens the selected result and dismisses search.
         type("query",std::string(1,B_DOWN_ARROW).c_str());
         Wait(*w,[&]{return inspect([](BWindow& window) { return dynamic_cast<BListView*>(window.FindView("results"))->CurrentSelection()==2; });});
-        type("query","\n");Wait(*w,[&]{return !search.IsValid() && w->fPendingOpen.empty();});CHECK(w->Current()->path==file);
+        type("query","\n");Wait(*w,[&]{return !search.IsValid() && (w->fPendingOpen.empty() && !w->fResolvingOpens);});CHECK(w->Current()->path==file);
         CHECK(w->Current()->editor->SendMessage(SCI_LINEFROMPOSITION,w->Current()->editor->SendMessage(SCI_GETCURRENTPOS))==1);
         // Up and Down skip file headings between one-hit files and stop at
         // both ends of the list, with focus kept in the query (#40).
@@ -921,7 +939,7 @@ struct WorkspaceTestAccess {
         auto key=[&](char code,int expected){type("query",std::string(1,code).c_str());Wait(*w,[&]{return selection()==expected;});CHECK(selection()==expected);};
         key(B_DOWN_ARROW,3);key(B_DOWN_ARROW,3);key(B_UP_ARROW,1);key(B_UP_ARROW,1);key(B_DOWN_ARROW,3);
         CHECK(inspect([](BWindow& window){return window.CurrentFocus()==dynamic_cast<BTextControl*>(window.FindView("query"))->TextView();}));
-        type("query","\n");Wait(*w,[&]{return !search.IsValid() && w->fPendingOpen.empty();});CHECK(w->Current()->path==root+"/third.txt");
+        type("query","\n");Wait(*w,[&]{return !search.IsValid() && (w->fPendingOpen.empty() && !w->fResolvingOpens);});CHECK(w->Current()->path==root+"/third.txt");
         // Open Quickly shares query controls: moving to its list must not accept it.
         w->Search(false);search=w->fSearchWindows.back();type("query","example");
         Wait(*w,[&]{return inspect([](BWindow& window) { auto* results=dynamic_cast<BListView*>(window.FindView("results"));return results && results->CountItems()==1; });});
@@ -1059,26 +1077,26 @@ struct WorkspaceTestAccess {
         Open(*w,e,true);CHECK(!w->FindTab(previewID));CHECK(right->tabs.size()==3);CHECK(w->fClosedTabs.size()==1);
         auto* previewEditor=w->CurrentTab()->editor;previewEditor->SendMessage(SCI_APPENDTEXT,1,reinterpret_cast<sptr_t>("!"));
         // Open before SCN_MODIFIED is delivered: synchronous dirty state protects edits.
-        w->OpenFile(c,1,1,true,true);Wait(*w,[&]{return w->fPendingOpen.empty();});
+        w->OpenFile(c,1,1,true,true);Wait(*w,[&]{return (w->fPendingOpen.empty() && !w->fResolvingOpens);});
         CHECK(right->tabs.size()==4);CHECK(!right->tabs[2]->preview && right->tabs[2]->editor->Dirty());
         CHECK(w->CurrentTab()->preview);BMessage keep(kKeepTab);keep.AddBool("current_tab",true);keep.AddInt32("index",23);
         auto keepID=w->CurrentTab()->id;w->MessageReceived(&keep);CHECK(w->CurrentTab()->id==keepID && !w->CurrentTab()->preview);
         w->SelectTab(2);Save(*w);
         w->CurrentTab()->editor->SendMessage(SCI_SETSEL,150,160);w->CurrentTab()->editor->SendMessage(SCI_SETFIRSTVISIBLELINE,85);
-        CHECK(w->CloseTab(right->selected));w->ReopenTab();Wait(*w,[&]{return w->fPendingOpen.empty();});
+        CHECK(w->CloseTab(right->selected));w->ReopenTab();Wait(*w,[&]{return (w->fPendingOpen.empty() && !w->fResolvingOpens);});
         CHECK(w->Current()->path==e);CHECK(w->CurrentTab()->editor->SendMessage(SCI_GETCURRENTPOS)==160);
         CHECK(w->CurrentTab()->editor->SendMessage(SCI_GETFIRSTVISIBLELINE)==85);
         CHECK(w->CloseTab(right->selected));Open(*w,e);auto count=right->tabs.size();w->ReopenTab();CHECK(right->tabs.size()==count);
         CHECK(w->CurrentTab()->editor->SendMessage(SCI_GETCURRENTPOS)==160);
         auto closeID=w->CurrentTab()->id,retainID=right->tabs.front()->id;
         BMessage close(kCloseTab);close.AddBool("current_tab",true);close.AddInt32("index",23);w->MessageReceived(&close);
-        CHECK(!w->FindTab(closeID) && w->FindTab(retainID));w->ReopenTab();Wait(*w,[&]{return w->fPendingOpen.empty();});CHECK(w->Current()->path==e);
+        CHECK(!w->FindTab(closeID) && w->FindTab(retainID));w->ReopenTab();Wait(*w,[&]{return (w->fPendingOpen.empty() && !w->fResolvingOpens);});CHECK(w->Current()->path==e);
         // An edit followed immediately by Undo still keeps its preview open.
         Open(*w,c);CHECK(w->CloseTab(right->selected));Open(*w,c,true);CHECK(w->CurrentTab()->preview);
         auto* undone=w->CurrentTab()->editor;undone->SendMessage(SCI_APPENDTEXT,1,reinterpret_cast<sptr_t>("x"));undone->SendMessage(SCI_UNDO);
         w->UpdateTabs();CHECK(!w->CurrentTab()->preview && !undone->Dirty());
         CHECK(w->CloseTab(right->selected));Open(*w,c,true);Save(*w);CHECK(!w->CurrentTab()->preview);
-        Open(*w,c);CHECK(w->CloseTab(right->selected));fs::remove(c);w->ReopenTab();CHECK(w->fPendingOpen.empty());CHECK(!fs::exists(c));
+        Open(*w,c);CHECK(w->CloseTab(right->selected));fs::remove(c);w->ReopenTab();CHECK((w->fPendingOpen.empty() && !w->fResolvingOpens));CHECK(!fs::exists(c));
         w->NewFile();auto history=w->fClosedTabs.size();CHECK(w->CloseTab(w->fActivePane->selected));CHECK(w->fClosedTabs.size()==history);
         Send(*w,kPreviewTabs);CHECK(!w->fPreviewTabs);
 
@@ -1113,7 +1131,7 @@ struct WorkspaceTestAccess {
         auto concurrent=root+"/concurrent.txt";{std::ofstream out(concurrent);out<<lines;}
         w->OpenFile(concurrent,1,1,true,false,w->fPanes[0]->id);
         w->OpenFile(concurrent,1,1,true,false,w->fPanes[1]->id);
-        Wait(*w,[&]{return w->fPendingOpen.empty();});size_t documents=0;int64 concurrentID=0;
+        Wait(*w,[&]{return (w->fPendingOpen.empty() && !w->fResolvingOpens);});size_t documents=0;int64 concurrentID=0;
         for(auto& d:w->fDocuments) if(d->path==concurrent) { ++documents;concurrentID=d->id; }
         CHECK(documents==1 && w->ViewCount(concurrentID)==2);
 
@@ -1176,7 +1194,7 @@ int main(int argc,char** argv) {
     }
     BApplication application("application/x-vnd.Kiri-workspace-unit-tests");
     char folder[]="/tmp/kiri-workspace-XXXXXX";auto* root=mkdtemp(folder);if(!root) return 1;
-    try { if(argc==2 && std::string(argv[1])=="--terminal-selection") {kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditPreviewRows(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" terminal and problem checks.\n";return 0;}
-        if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditPreviewRows(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
+    try { if(argc==2 && std::string(argv[1])=="--terminal-selection") {kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowMetadata(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditPreviewRows(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" terminal and problem checks.\n";return 0;}
+        if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowMetadata(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditPreviewRows(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
     catch(const std::exception& error) { std::cerr<<error.what()<<" (test files: "<<root<<")\n";return 1; }
 }

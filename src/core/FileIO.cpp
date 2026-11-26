@@ -86,8 +86,10 @@ bool FileStamp::operator==(const FileStamp& o) const {
     return exists==o.exists && (!exists || (device==o.device && inode==o.inode && size==o.size
         && seconds==o.seconds && nanoseconds==o.nanoseconds));
 }
-FileStamp StatFile(const std::string& path) { struct stat s; return stat(path.c_str(),&s)==0 ? Stamp(s) : FileStamp{}; }
+std::function<void(const std::string&)>& MetadataProbe() { static std::function<void(const std::string&)> probe;return probe; }
+FileStamp StatFile(const std::string& path) { if(auto& probe=MetadataProbe()) probe(path);struct stat s; return stat(path.c_str(),&s)==0 ? Stamp(s) : FileStamp{}; }
 std::string CanonicalPath(const std::string& path) {
+    if(auto& probe=MetadataProbe()) probe(path);
     std::error_code error;
     auto resolved=std::filesystem::weakly_canonical(std::filesystem::absolute(path,error),error);
     return error ? path : resolved.string();

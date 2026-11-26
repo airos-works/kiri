@@ -91,6 +91,8 @@ private:
     void ActivatePane(Pane* pane,bool focus=false);
     int AddTab(Pane& pane,Document& document,bool preview=false,bool firstView=false);
     void ShowDocument(Pane& pane,Document& document,size_t line,size_t column,bool preview,bool activate,bool focusEditor,bool firstView=false);
+    void ActivateOpen(Pane& pane,Document& document,size_t line,size_t column,bool activate,bool preview,bool focusEditor);
+    void OpenResolved(const std::string& path,uint64_t size,size_t line,size_t column,bool activate,bool preview,int64 pane,bool focusEditor,int64 paneSerial,int64 focus);
     void PromotePreviews();
     void KeepTab(int index);
     void SetMarkdownPreview(Tab& tab,bool enabled);
@@ -272,6 +274,7 @@ private:
     std::map<int64,BMessage> fRestoreViews;
     std::map<std::string,std::vector<std::function<void()>>> fPendingRequests;
     std::set<std::string> fPendingOpen;
+    int fResolvingOpens=0; // opens whose path and size are being read on a worker
     std::shared_ptr<ProjectIndex> fIndex=std::make_shared<ProjectIndex>();
     std::shared_ptr<ProjectIndexSlot> fIndexSlot=std::make_shared<ProjectIndexSlot>();
     std::string fProject,fGitRoot,fSettings;

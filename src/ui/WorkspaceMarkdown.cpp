@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "ui/Workspace.h"
 #include "ui/Editor.h"
 #include "ui/MarkdownView.h"
@@ -35,7 +36,10 @@ void Workspace::OpenMarkdownLink(const BMessage& message) {
             UpdateTabs();SaveSettings();return;
         }
     };
+    // An open file is shown at once; otherwise finish after it has loaded.
+    bool open=std::any_of(fDocuments.begin(),fDocuments.end(),[&](const auto& d){return d->path==path;});
+    if(!open) fPendingRequests[path].push_back(std::move(finish));
     OpenFile(path,0,0,true,false,paneID);
-    if(fPendingOpen.count(path)) fPendingRequests[path].push_back(std::move(finish));else finish();
+    if(open) finish();
 }
 }
