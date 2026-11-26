@@ -37,6 +37,14 @@ static void Queries() {
     options.regex=false;options.query="a$";replacement="$1\\n";matches=TextQuery(options).Find("a$",0,SIZE_MAX,20,nullptr,&replacement);CHECK(ApplyTextEdits("a$",matches.matches)==replacement);
     options.regex=true;options.query="(a+)+$";matches=TextQuery(options).Find(std::string(10000,'a')+"!");CHECK(!matches.error.empty());CHECK(matches.matches.empty());
 }
+static void PathFilters() {
+    // Each **/ independently spans zero or more directories (#11).
+    ProjectSearchOptions include,exclude;include.include="a/**/b/**/c";exclude.exclude="a/**/b/**/c";
+    for(auto path:{"a/b/c","a/b/y/c","a/x/b/y/c","a/x/b/c","a/x/y/b/c","a/x/b/y/z/c"}) { CHECK(MatchesProjectPath(path,include));CHECK(!MatchesProjectPath(path,exclude)); }
+    for(auto path:{"a/c","b/c","a/b/d","x/a/b/c"}) { CHECK(!MatchesProjectPath(path,include));CHECK(MatchesProjectPath(path,exclude)); }
+    include.include="**/*.ts";CHECK(MatchesProjectPath("a.ts",include));CHECK(MatchesProjectPath("x/y/a.ts",include));
+    include.include="*.ts";CHECK(MatchesProjectPath("x/y/a.ts",include));
+}
 static void ProjectQueries() {
     Temp temp;fs::create_directories(temp.path+"/src/generated");fs::create_directories(temp.path+"/tests");
     ProcessOptions process;process.directory=temp.path;CHECK(RunProcess({"git","init","-q"},process).ok());
@@ -107,4 +115,4 @@ static void WorkspaceEdits() {
     edit["changes"][FileURI(path)][0]["range"]=Range(0,3,99);CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
     edit["changes"][FileURI(path)]=Json::array({change["edits"][0],change["edits"][0]});CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
 }
-int main() { try { Queries();ProjectQueries();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();PathFilters();ProjectQueries();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }

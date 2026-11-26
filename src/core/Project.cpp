@@ -134,11 +134,17 @@ std::vector<std::string> Patterns(const std::string& text) {
         start=end+1;
     }return parts;
 }
+// * spans directory separators; each **/ additionally matches zero
+// directories. Every **/ from `from` on is tried both ways, independently,
+// so a/**/b/**/c matches a/x/b/c (first spans x/, second spans nothing).
+bool RecursiveGlob(const std::string& pattern,const std::string& path,size_t from) {
+    auto recursive=pattern.find("**/",from);
+    if(recursive==std::string::npos) return fnmatch(pattern.c_str(),path.c_str(),0)==0;
+    return RecursiveGlob(pattern,path,recursive+3)
+        || RecursiveGlob(pattern.substr(0,recursive)+pattern.substr(recursive+3),path,recursive);
+}
 bool Glob(const std::string& pattern,const std::string& path) {
-    // * spans directory separators; **/ additionally matches zero directories.
-    if(fnmatch(pattern.c_str(),path.c_str(),0)==0) return true;
-    auto recursive=pattern.find("**/");
-    if(recursive!=std::string::npos && Glob(pattern.substr(0,recursive)+pattern.substr(recursive+3),path)) return true;
+    if(RecursiveGlob(pattern,path,0)) return true;
     return pattern.find('/')==std::string::npos && fnmatch(pattern.c_str(),fs::path(path).filename().c_str(),0)==0;
 }
 }

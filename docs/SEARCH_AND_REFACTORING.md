@@ -60,7 +60,8 @@ in the result status. Unsaved edits are used when building a replacement preview
 - **Folders:** project-relative folders separated by semicolons, such as `src;tests`.
 - **Include / Exclude:** semicolon-separated globs, such as `*.ts;*.tsx` and
   `generated/*;*.min.js`. A pattern without `/` also matches file basenames.
-  `*` spans directories; `**/` can also match zero directories.
+  `*` spans directories; each `**/` can also match zero directories, so
+  `a/**/b/**/c` matches `a/b/c`, `a/x/b/c` and `a/x/b/y/c`.
 - **Include ignored files:** explicitly includes Git-ignored files. In projects
   without Git, it includes normally omitted build/vendor/cache directories.
   Repository metadata directories remain excluded.
