@@ -23,7 +23,14 @@ ProjectChanges ProjectMonitor::Poll(const std::vector<std::string>& priority,con
         State state;state.names=state.contents=14695981039346656037ULL;
         auto previous=fStates.find(path);
         if(!listing.error.empty()) {
-            if(previous!=fStates.end()) { result.changedDirectories.push_back(path);fStates.erase(previous);result.contents=true; }
+            if(previous!=fStates.end()) {
+                result.changedDirectories.push_back(path);fStates.erase(previous);result.contents=true;
+                if(fCandidateSet.erase(path)) {
+                    fCandidates.erase(std::remove(fCandidates.begin(),fCandidates.end(),path),fCandidates.end());
+                    // Rare: refill from the inventory so watches stay near the limit.
+                    for(auto& known:fStates) { if(fCandidates.size()>=kWatchCandidates) break;if(fCandidateSet.insert(known.first).second) fCandidates.push_back(known.first); }
+                }
+            }
             fFailed.insert(path);
             if(path!=fRoot) { fKnown.erase(path);fDirectoryStamps.erase(path); }
             if(path==fRoot) { fPending.push_back(path);fQueued.insert(path); }
@@ -58,12 +65,11 @@ ProjectChanges ProjectMonitor::Poll(const std::vector<std::string>& priority,con
         } else if(fFailed.count(path) || newest>=fIndexedSince.load()) { result.changedDirectories.push_back(path);result.contents=true; }
         fFailed.erase(path);
         fStates[path]=state;fPending.push_back(path);fQueued.insert(path);
+        if(fCandidates.size()<kWatchCandidates && fCandidateSet.insert(path).second) fCandidates.push_back(path);
         if(std::chrono::steady_clock::now()-started>std::chrono::milliseconds(100)) break;
     }
-    for(auto& entry:fStates) {
-        result.directories.push_back(entry.first);
-        std::pair<uint64_t,uint64_t> node{0,0};Node(entry.first,node);result.nodes.push_back(node);
-    }
+    result.directories=fCandidates;result.nodes.reserve(fCandidates.size());
+    for(auto& path:fCandidates) { std::pair<uint64_t,uint64_t> node{0,0};Node(path,node);result.nodes.push_back(node); }
     return result;
 }
 }

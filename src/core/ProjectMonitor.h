@@ -8,6 +8,8 @@
 
 namespace kiri {
 struct ProjectChanges {
+    // directories: up to kWatchCandidates listed directories to watch natively,
+    // in discovery order (shallow first). Every directory is still polled.
     std::vector<std::string> directories,changedDirectories;
     // Device and inode of each entry in directories, from the parent listing.
     std::vector<std::pair<uint64_t,uint64_t>> nodes;
@@ -20,6 +22,7 @@ struct ProjectChanges {
 // be read before. Discovering an unchanged tree never forces a new index.
 class ProjectMonitor {
 public:
+    static constexpr size_t kWatchCandidates=512;
     explicit ProjectMonitor(std::string root):fRoot(std::move(root)) { fPending.push_back(fRoot);fQueued.insert(fRoot);fKnown.insert(fRoot); }
     ProjectChanges Poll(const std::vector<std::string>& priority={},const std::atomic<bool>* cancel=nullptr,size_t budget=64);
     // Seconds since the epoch at which the latest project index began.
@@ -35,6 +38,10 @@ private:
     std::set<std::string> fFailed;
     std::map<std::string,State> fStates;
     std::map<std::string,FileStamp> fDirectoryStamps;
+    // A bounded subset of fStates, kept as directories are listed or lost,
+    // so a poll never copies the whole inventory of a large tree.
+    std::vector<std::string> fCandidates;
+    std::set<std::string> fCandidateSet;
     std::atomic<int64_t> fIndexedSince{LLONG_MAX};
 };
 }

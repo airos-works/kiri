@@ -108,6 +108,15 @@ static void DiscoveryTests(const std::string& root) {
     CHECK(find("link").symlink && find("link").directory);
     auto sized=find("sized.txt");CHECK(!sized.directory && sized.stamp.size==5 && sized.path==root+"/sized.txt");
     CHECK(!ListDirectory(root+"/missing").error.empty());
+    // A poll reports a bounded watch list, not every known directory (#36):
+    // shallow folders first, and a lost one is replaced from the inventory.
+    auto wide=root+"/wide";for(int i=0;i<700;++i) fs::create_directories(wide+"/w"+std::to_string(i));
+    ProjectMonitor large(wide);large.SetIndexTime(time(nullptr)+3600);ProjectChanges polled;
+    for(int i=0;i<40;++i) polled=large.Poll({},nullptr,64);
+    CHECK(polled.directories.size()==ProjectMonitor::kWatchCandidates);CHECK(polled.nodes.size()==polled.directories.size());CHECK(polled.directories.front()==wide);
+    auto lost=polled.directories[5];fs::remove(lost);bool replaced=false;
+    for(int i=0;i<40 && !replaced;++i) { polled=large.Poll({},nullptr,64);replaced=std::find(polled.directories.begin(),polled.directories.end(),lost)==polled.directories.end(); }
+    CHECK(replaced);CHECK(polled.directories.size()==ProjectMonitor::kWatchCandidates);
     std::atomic<bool> cancel{true};CHECK(ListDirectory(root,&cancel).entries.empty());CHECK(IndexProject(root,&cancel).paths.empty());
 }
 int main() {
