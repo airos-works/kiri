@@ -197,7 +197,7 @@ private:
     void InvalidateAnalysis(Document& document);
     void AnalysisTick();
     void UpdateProblems();
-    void JumpProblem(int64 document,int64 serial,size_t offset);
+    void JumpProblem(int64 document,int64 serial,size_t index);
     void NavigateProblem(int direction);
     void Complete(Editor* source,bool manual=true,int character=0);
     void AcceptCompletion(Editor* source,const std::string& label);
@@ -248,6 +248,7 @@ private:
     SymbolBar* fSymbolBar;
     ProblemsView* fProblems=nullptr;
     int fLanguageVersion=0;
+    int64 fProblemDocument=0,fProblemSerial=-1;size_t fProblemIndex=0; // the last problem jumped to
     bool fProblemsDirty=true;
     struct Snapshot { int64 id,revision;size_t total,offset=0;std::shared_ptr<Draft> draft; };
     std::unique_ptr<Snapshot> fSnapshot;

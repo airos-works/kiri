@@ -4,7 +4,9 @@
 #include <View.h>
 class BListView;class BStringView;class BTextView;class BMenuField;
 namespace kiri {
-struct ProblemEntry { int64 document=0,serial=0;std::string path;Diagnostic diagnostic; };
+// index: position in the document's diagnostics for that analysis serial,
+// which tells apart problems that start at the same offset.
+struct ProblemEntry { int64 document=0,serial=0;std::string path;Diagnostic diagnostic;size_t index=0; };
 class ProblemsView:public BView {
 public:
     ProblemsView();
@@ -15,7 +17,7 @@ public:
     void SetProblems(std::vector<ProblemEntry> entries,const std::string& status);
     const std::vector<ProblemEntry>& Entries() const { return fEntries; }
     int SeverityFilter() const { return fFilter; }
-    void SelectProblem(int64 document,size_t start);
+    void SelectProblem(int64 document,int64 serial,size_t index);
 private:
     void Rebuild();
     const ProblemEntry* Selected() const;

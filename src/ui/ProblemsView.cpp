@@ -13,6 +13,7 @@
 #include <Font.h>
 #include <String.h>
 #include <algorithm>
+#include <optional>
 
 namespace kiri {
 namespace {
@@ -55,10 +56,17 @@ void ProblemsView::AttachedToWindow() {
 void ProblemsView::ApplyTheme(const Theme& theme) {fTheme=theme;ThemeView(this,theme);fList->SetViewColor(theme.background);fList->SetLowColor(theme.background);}
 const ProblemEntry* ProblemsView::Selected() const {auto selected=fList->CurrentSelection();return selected>=0 && size_t(selected)<fRows.size() && fRows[selected]>=0?&fEntries[fRows[selected]]:nullptr;}
 void ProblemsView::SetProblems(std::vector<ProblemEntry> entries,const std::string& status) {
-    int64 document=0;size_t position=0;if(auto* selected=Selected()) {document=selected->document;position=selected->diagnostic.start;}
+    // Keep the same problem selected across a refresh: its serial and index
+    // may change, so match the document and the diagnostic itself.
+    std::optional<ProblemEntry> previous;if(auto* selected=Selected()) previous=*selected;
     auto scroll=fList->Bounds().LeftTop();fEntries=std::move(entries);
     std::stable_sort(fEntries.begin(),fEntries.end(),[](const auto& a,const auto& b){return a.path==b.path?(a.diagnostic.start==b.diagnostic.start?a.diagnostic.severity<b.diagnostic.severity:a.diagnostic.start<b.diagnostic.start):a.path<b.path;});
-    Rebuild();SelectProblem(document,position);fList->ScrollTo(scroll);fStatus->SetText(status.substr(0,status.find('\n')).c_str());fStatus->SetToolTip(status.c_str());
+    Rebuild();
+    if(previous) for(size_t i=0;i<fRows.size();++i) if(fRows[i]>=0) {
+        auto& item=fEntries[fRows[i]];auto& a=item.diagnostic;auto& b=previous->diagnostic;
+        if(item.document==previous->document && a.start==b.start && a.end==b.end && a.severity==b.severity && a.message==b.message) {fList->Select(i);break;}
+    }
+    fList->ScrollTo(scroll);fStatus->SetText(status.substr(0,status.find('\n')).c_str());fStatus->SetToolTip(status.c_str());
 }
 void ProblemsView::Rebuild() {
     while(auto* item=fList->RemoveItem(int32(0))) delete item;fRows.clear();fDetails->SetText("");std::string previous;
@@ -70,15 +78,15 @@ void ProblemsView::Rebuild() {
         fList->AddItem(new ProblemItem(label,&fTheme));fRows.push_back(i);
     }
 }
-void ProblemsView::SelectProblem(int64 document,size_t start) {
-    for(size_t i=0;i<fRows.size();++i) if(fRows[i]>=0) {auto& item=fEntries[fRows[i]];if(item.document==document && item.diagnostic.start==start) {fList->Select(i);break;}}
+void ProblemsView::SelectProblem(int64 document,int64 serial,size_t index) {
+    for(size_t i=0;i<fRows.size();++i) if(fRows[i]>=0) {auto& item=fEntries[fRows[i]];if(item.document==document && item.serial==serial && item.index==index) {fList->Select(i);fList->ScrollToSelection();break;}}
 }
 void ProblemsView::MessageReceived(BMessage* message) {
     if(message->what==kSeverity) {message->FindInt32("severity",&fFilter);Rebuild();}
     else if(message->what==kSelected || message->what==kInvoked) {
         if(auto* entry=Selected()) {
             auto& item=entry->diagnostic;auto detail=std::string(SeverityName(item.severity))+" · "+item.source+(item.code.empty()?"":" "+item.code)+"\n"+item.message;fDetails->SetText(detail.c_str());
-            if(message->what==kInvoked) {BMessage jump(kJumpProblem);jump.AddInt64("document",entry->document);jump.AddInt64("serial",entry->serial);jump.AddInt64("offset",item.start);Window()->PostMessage(&jump);}
+            if(message->what==kInvoked) {BMessage jump(kJumpProblem);jump.AddInt64("document",entry->document);jump.AddInt64("serial",entry->serial);jump.AddInt64("index",int64(entry->index));Window()->PostMessage(&jump);}
         }
     }else BView::MessageReceived(message);
 }

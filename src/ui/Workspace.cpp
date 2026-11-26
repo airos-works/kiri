@@ -1025,7 +1025,7 @@ void Workspace::MessageReceived(BMessage* message) {
         case kToggleProblems:fTerminalSplit->SetItemCollapsed(2,!fTerminalSplit->IsItemCollapsed(2));fProblemsDirty=true;UpdateProblems();break;
         case kNextProblem:NavigateProblem(1);break;
         case kPreviousProblem:NavigateProblem(-1);break;
-        case kJumpProblem: {int64 document=0,serial=0,offset=-1;if(message->FindInt64("document",&document)==B_OK && message->FindInt64("serial",&serial)==B_OK && message->FindInt64("offset",&offset)==B_OK && offset>=0) JumpProblem(document,serial,offset);break;}
+        case kJumpProblem: {int64 document=0,serial=0,index=-1;if(message->FindInt64("document",&document)==B_OK && message->FindInt64("serial",&serial)==B_OK && message->FindInt64("index",&index)==B_OK && index>=0) JumpProblem(document,serial,index);break;}
         case kRestartLanguages:ResetLanguages();LanguageTick();break;
         case kTheme: {
             const char* name;int32 index;

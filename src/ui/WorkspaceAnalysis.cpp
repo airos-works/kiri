@@ -141,7 +141,7 @@ void Workspace::UpdateProblems() {
     if(!fProblemsDirty || !fProblems) return;fProblemsDirty=false;
     std::vector<ProblemEntry> entries;int errors=0,warnings=0;std::string states;
     for(auto& d:fDocuments) if(d->editor) {
-        for(auto& problem:d->diagnostics) {if(entries.size()==10000) break;entries.push_back({d->id,d->diagnosticSerial,d->path,problem});errors+=problem.severity==1;warnings+=problem.severity==2;}
+        for(size_t i=0;i<d->diagnostics.size();++i) {if(entries.size()==10000) break;auto& problem=d->diagnostics[i];entries.push_back({d->id,d->diagnosticSerial,d->path,problem,i});errors+=problem.severity==1;warnings+=problem.severity==2;}
         if(!states.empty()) states+="\n";states+=d->name+": "+d->languageStatus+" · "+d->diagnosticStatus+" · "+d->semanticStatus;
     }
     std::string status=std::to_string(entries.size())+" problems · "+std::to_string(errors)+" errors · "+std::to_string(warnings)+" warnings";
@@ -150,17 +150,27 @@ void Workspace::UpdateProblems() {
     if(!states.empty()) status+="\n"+states;
     fProblems->SetProblems(std::move(entries),status);
 }
-void Workspace::JumpProblem(int64 id,int64 serial,size_t offset) {
-    auto* d=ByID(id);if(!d || !d->editor || d->diagnosticSerial!=serial || d->analysisRevision!=d->editor->InputRevision()) return;
-    auto found=std::find_if(d->diagnostics.begin(),d->diagnostics.end(),[&](const auto& item){return item.start==offset;});if(found==d->diagnostics.end()) return;
+void Workspace::JumpProblem(int64 id,int64 serial,size_t index) {
+    auto* d=ByID(id);if(!d || !d->editor || d->diagnosticSerial!=serial || d->analysisRevision!=d->editor->InputRevision() || index>=d->diagnostics.size()) return;
+    auto problem=d->diagnostics[index];
     fModeLayout->SetVisibleItem(int32(0));ShowDocument(*fActivePane,*d,1,1,false,true,true);
-    auto* editor=Current()->editor;editor->SendMessage(SCI_ENSUREVISIBLEENFORCEPOLICY,editor->SendMessage(SCI_LINEFROMPOSITION,offset));editor->SendMessage(SCI_SETSEL,found->start,found->end);editor->SendMessage(SCI_SCROLLCARET);editor->MakeFocus();editor->ShowDiagnostic(offset);fProblems->SelectProblem(id,offset);
+    auto* editor=Current()->editor;editor->SendMessage(SCI_ENSUREVISIBLEENFORCEPOLICY,editor->SendMessage(SCI_LINEFROMPOSITION,problem.start));editor->SendMessage(SCI_SETSEL,problem.start,problem.end);editor->SendMessage(SCI_SCROLLCARET);editor->MakeFocus();editor->ShowDiagnostic(problem.start);
+    fProblemDocument=id;fProblemSerial=serial;fProblemIndex=index;fProblems->SelectProblem(id,serial,index);
 }
 void Workspace::NavigateProblem(int direction) {
     std::vector<ProblemEntry> entries;for(const auto& entry:fProblems->Entries()) if(!fProblems->SeverityFilter() || fProblems->SeverityFilter()==entry.diagnostic.severity) entries.push_back(entry);
     if(entries.empty()) {Notice("No current problems match this severity in open files.");return;}
-    auto* d=Current();int index=-1;auto offset=d && d->editor?size_t(d->editor->SendMessage(SCI_GETSELECTIONSTART)):0;
-    for(size_t i=0;i<entries.size();++i) if(d && entries[i].document==d->id && entries[i].diagnostic.start==offset) {index=i;break;}
-    index=index<0?(direction>0?0:int(entries.size())-1):(index+direction+int(entries.size()))%entries.size();auto entry=entries[index];JumpProblem(entry.document,entry.serial,entry.diagnostic.start);
+    auto* d=Current();int index=-1;
+    if(d && d->editor) {
+        size_t start=d->editor->SendMessage(SCI_GETSELECTIONSTART),end=d->editor->SendMessage(SCI_GETSELECTIONEND);
+        // The problem navigated to last, while its range is still selected,
+        // even when another problem starts at the same offset.
+        for(size_t i=0;i<entries.size() && index<0;++i) {
+            auto& entry=entries[i];
+            if(entry.document==d->id && entry.document==fProblemDocument && entry.serial==fProblemSerial && entry.index==fProblemIndex && entry.diagnostic.start==start && entry.diagnostic.end==end) index=i;
+        }
+        for(size_t i=0;i<entries.size() && index<0;++i) if(entries[i].document==d->id && entries[i].diagnostic.start==start) index=i;
+    }
+    index=index<0?(direction>0?0:int(entries.size())-1):(index+direction+int(entries.size()))%entries.size();auto entry=entries[index];JumpProblem(entry.document,entry.serial,entry.index);
 }
 }
