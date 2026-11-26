@@ -145,7 +145,7 @@ public:
             // Project search reads files again for every update; a growing
             // index snapshot only concerns quick-open.
             if(message->what==kProjectUpdated && fSearch && message->GetBool("index_only",false)) return;
-            if(message->what==kProjectUpdated) fIndex=fSlot->Get();
+            if(message->what==kProjectUpdated) { fIndex=fSlot->Get();if(message->GetBool("membership",false)) fIgnoredIndex.reset(); }
             fJobs->Cancel("query");
             ++fGeneration;fMatches.clear();fRows.clear();while(auto* item=fResults->RemoveItem(int32(0))) delete item;fStatus->SetText("Searching disk…");BMessage request(kProjectSearch);fTimer=std::make_unique<BMessageRunner>(BMessenger(this),&request,120000,1);
         } else if(message->what==kProjectSearch) Query();
@@ -174,18 +174,27 @@ private:
     }
     void Query() {
         auto options=Options();auto generation=++fGeneration;auto root=fRoot;auto index=fIndex;bool search=fSearch;
+        // A blank query searches nothing, so it lists nothing on disk either.
+        if(search && options.query.empty()) { fJobs->Cancel("query");fStatus->SetText("Search text in project files");fStatus->SetToolTip(static_cast<const char*>(nullptr));return; }
+        if(search && options.includeIgnored) index=fIgnoredIndex;
         fStatus->SetText(search?"Searching files on disk…":"Finding paths…");
         fJobs->Submit([this,options,generation,root,index,search](const auto& cancel) mutable {
-            // Quick-open uses the workspace index, including a partial one while
-            // a large project is still being indexed, instead of walking again.
-            if(search || (index->paths.empty() && !index->partial)) index=std::make_shared<ProjectIndex>(IndexProject(root,&cancel,500000,options.includeIgnored));
+            // Both use the workspace's completed index instead of walking the
+            // project per query; file contents are still read for each search.
+            // Quick-open also accepts a partial index while a large project is
+            // still being indexed. Search walks itself only for ignored files
+            // (cached until the project's membership changes) or while the
+            // workspace index is incomplete.
+            if(search && (!index || index->partial)) index=std::make_shared<ProjectIndex>(IndexProject(root,&cancel,500000,options.includeIgnored));
+            else if(!search && index->paths.empty() && !index->partial) index=std::make_shared<ProjectIndex>(IndexProject(root,&cancel,500000,false));
             SearchResult result;
             if(search) result=SearchProject(root,*index,options,&cancel);
             else for(auto& path:QuickOpen(*index,options.query)) result.matches.push_back({path,"",1,1,0,0,{}});
-            return [this,result=std::move(result),generation,search,index] {
+            return [this,result=std::move(result),generation,search,index,options] {
                 if(generation!=fGeneration) return;
                 while(auto* item=fResults->RemoveItem(int32(0))) delete item;
-                fMatches=result.matches;fRows.clear();fIndex=index;std::string previous;
+                fMatches=result.matches;fRows.clear();std::string previous;
+                if(search && options.includeIgnored) fIgnoredIndex=index;else if(!index->partial) fIndex=index;
                 for(size_t i=0;i<fMatches.size();++i) {
                     const auto& match=fMatches[i];
                     if(search && previous!=match.path) { auto* header=new SearchItem(match.path.c_str(),&fTheme);header->SetEnabled(false);fResults->AddItem(header);fRows.push_back(-1);previous=match.path; }
@@ -201,7 +210,7 @@ private:
             };
         },"query",[this,generation](const std::string& error){if(generation==fGeneration) fStatus->SetText(error.c_str());});
     }
-    BMessenger fTarget;std::string fRoot;std::shared_ptr<ProjectIndexSlot> fSlot;std::shared_ptr<ProjectIndex> fIndex;bool fSearch;Theme fTheme;
+    BMessenger fTarget;std::string fRoot;std::shared_ptr<ProjectIndexSlot> fSlot;std::shared_ptr<ProjectIndex> fIndex,fIgnoredIndex;bool fSearch;Theme fTheme;
     BTextControl* fQuery;BListView* fResults;BStringView* fStatus;
     BTextControl *fFolders=nullptr,*fInclude=nullptr,*fExclude=nullptr,*fReplacement=nullptr;
     BCheckBox *fCase=nullptr,*fRegex=nullptr,*fWord=nullptr,*fIgnored=nullptr;
@@ -454,7 +463,7 @@ void Workspace::RefreshIndex() {
 void Workspace::SetIndex(std::shared_ptr<ProjectIndex> index,bool complete) {
     fIndex=std::move(index);fIndexSlot->Set(fIndex);
     // Partial snapshots only refresh quick-open; project search re-reads files.
-    RefreshSearchWindows(!complete);
+    RefreshSearchWindows(!complete,complete);
     if(!Current()) UpdateStatus();
 }
 void Workspace::DrainJobs() {
@@ -563,7 +572,7 @@ void Workspace::SaveTo(int64 id,const std::string& input) {
             if(!error.empty()) {
                 document->closeAfterSave=false;CancelQuit();fSaveQueue.clear();fCloseQueue.clear();fClosingPane=0;Notice(error);(new BAlert("Save File",error.c_str(),"OK"))->Go();return;
             }
-            if(document->path!=path) CloseLanguage(*document);
+            bool renamed=document->path!=path;if(renamed) CloseLanguage(*document);
             document->path=path;document->name=fs::path(path).filename().string();document->stamp=stamp;document->external=false;
             fJobs->Cancel("document-config-"+std::to_string(id));++document->configSerial;document->configPending=false;document->editor->State()->config=config;
             RememberRecent(path,false);
@@ -576,7 +585,8 @@ void Workspace::SaveTo(int64 id,const std::string& input) {
                 CloseView(document->closeView);
             }
             fGit->Refresh();
-            RefreshIndex();
+            // Saving in place keeps the project's file list; a new name may add a file.
+            if(renamed) RefreshIndex();
             if(fQuitWhenSaved) PostMessage(B_QUIT_REQUESTED);
             ContinueSaveAll();
             ContinueCloseTabs();

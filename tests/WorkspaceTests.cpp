@@ -719,7 +719,21 @@ struct WorkspaceTestAccess {
         CHECK(inspect([](BWindow& window) { window.FindView("results")->MakeFocus();return true; }));
         Wait(*w,[&]{return true;});CHECK(search.IsValid());
         CHECK(inspect([](BWindow& window) { return dynamic_cast<BListView*>(window.FindView("results"))->Invoke()==B_OK; }));
-        Wait(*w,[&]{return !search.IsValid();});w->Quit();
+        Wait(*w,[&]{return !search.IsValid();});
+        // Search Project reuses the workspace's completed index rather than
+        // walking per query (#7). Stop the change scan so only this test
+        // updates the index: a file the index lacks stays out of the results
+        // until the project's membership changes.
+        Wait(*w,[&]{return !w->fIndexRunning && !w->fMonitorPending;});w->fProjectMonitor.reset();
+        {std::ofstream(root+"/unindexed.txt")<<"old\n";}
+        auto known=std::make_shared<ProjectIndex>();known->paths={"example.txt"};w->SetIndex(known,true);
+        w->Search(true);search=w->fSearchWindows.back();
+        auto status=[&]{std::string text;inspect([&](BWindow& window){text=dynamic_cast<BStringView*>(window.FindView("search status"))->Text();return true;});return text;};
+        auto results=[&]{int count=-1;inspect([&](BWindow& window){count=dynamic_cast<BListView*>(window.FindView("results"))->CountItems();return true;});return count;};
+        snooze(300000);CHECK(status()=="Search text in project files");CHECK(results()==0);
+        type("query","old");Wait(*w,[&]{return results()==3;});snooze(300000);CHECK(results()==3);
+        auto all=std::make_shared<ProjectIndex>();all->paths={"example.txt","unindexed.txt"};w->SetIndex(all,true);
+        Wait(*w,[&]{return results()==5;});search.SendMessage(B_QUIT_REQUESTED);w->Quit();
     }
     static void SearchAndEdits(const std::string& base,const std::string& executable) {
         auto root=base+"/edit-project",settings=base+"/edit-settings";fs::create_directories(root);

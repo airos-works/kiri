@@ -177,7 +177,8 @@ private:
     void PollProject();
     using WatchList=std::vector<std::pair<std::string,std::pair<uint64_t,uint64_t>>>;
     void UpdateNodeWatches(const WatchList& directories);
-    void RefreshSearchWindows(bool indexOnly=false);
+    // membership: the project's file list changed (a completed index).
+    void RefreshSearchWindows(bool indexOnly=false,bool membership=false);
     void Notice(const std::string& text);
     void FormatDocument(Editor* source);
     void ShowLanguageTools();

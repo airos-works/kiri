@@ -225,8 +225,8 @@ void Workspace::UpdateNodeWatches(const WatchList& directories) {
     for(auto& item:fWatchedNodes) if(!watched.count(item.first)) { node_ref node{dev_t(item.first.first),ino_t(item.first.second)};watch_node(&node,B_STOP_WATCHING,BMessenger(this)); }
     fWatchedNodes=std::move(watched);
 }
-void Workspace::RefreshSearchWindows(bool indexOnly) {
-    BMessage update(kProjectUpdated);update.AddBool("index_only",indexOnly);
+void Workspace::RefreshSearchWindows(bool indexOnly,bool membership) {
+    BMessage update(kProjectUpdated);update.AddBool("index_only",indexOnly);update.AddBool("membership",membership);
     for(auto it=fSearchWindows.begin();it!=fSearchWindows.end();) { if(!it->IsValid()) it=fSearchWindows.erase(it);else { it->SendMessage(&update);++it; } }
 }
 }
