@@ -441,6 +441,12 @@ int Editor::Replace(const SearchOptions& options,const std::string& replacement,
 bool Editor::Find(const std::string& query,bool backwards,bool matchCase,bool regex) { return Find(SearchOptions{query,matchCase,regex,false},backwards); }
 bool Editor::ReplaceOne(const std::string& query,const std::string& replacement,bool matchCase) { return Replace(SearchOptions{query,matchCase,false,false},replacement,false)>0; }
 int Editor::ReplaceAll(const std::string& query,const std::string& replacement,bool matchCase) { return Replace(SearchOptions{query,matchCase,false,false},replacement,true); }
+void Editor::GoToVisualColumn(size_t line,size_t column,bool focus) {
+    // Out-of-range lines go to the last line; columns past the end, to its end.
+    auto lines=size_t(SendMessage(SCI_GETLINECOUNT));line=std::clamp<size_t>(line,1,std::max<size_t>(lines,1));
+    auto pos=SendMessage(SCI_FINDCOLUMN,line-1,column?column-1:0);
+    SendMessage(SCI_GOTOPOS,pos);SendMessage(SCI_SCROLLCARET);if(focus) MakeFocus();
+}
 void Editor::GoTo(size_t line,size_t column,bool focus) {
     sptr_t pos=SendMessage(SCI_POSITIONFROMLINE,line?line-1:0);
     if(pos<0) pos=SendMessage(SCI_GETLENGTH);

@@ -62,6 +62,19 @@ struct TextQuery::Impl {
         return result;
     }
 };
+std::optional<LineColumn> ParseLineColumn(std::string_view text) {
+    auto trim=[](std::string_view& value){ while(!value.empty() && (value.front()==' ' || value.front()=='\t')) value.remove_prefix(1);while(!value.empty() && (value.back()==' ' || value.back()=='\t')) value.remove_suffix(1); };
+    auto number=[](std::string_view value)->size_t {
+        if(value.empty() || value.size()>9) return 0;
+        size_t result=0;for(char c:value) { if(c<'0' || c>'9') return 0;result=result*10+size_t(c-'0'); }
+        return result;
+    };
+    trim(text);auto colon=text.find(':');
+    auto lineText=text.substr(0,colon);trim(lineText);
+    LineColumn result;result.line=number(lineText);if(!result.line) return std::nullopt;
+    if(colon!=std::string_view::npos) { auto columnText=text.substr(colon+1);trim(columnText);result.column=number(columnText);if(!result.column) return std::nullopt; }
+    return result;
+}
 TextQuery::TextQuery(const SearchOptions& options):fImpl(std::make_unique<Impl>()) {
     auto& q=*fImpl;q.regex=options.regex;q.empty=options.query.empty();
     std::string pattern=options.regex?options.query:Quote(options.query);

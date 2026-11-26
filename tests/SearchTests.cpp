@@ -38,6 +38,12 @@ static void Queries() {
     options.regex=false;options.query="a$";replacement="$1\\n";matches=TextQuery(options).Find("a$",0,SIZE_MAX,20,nullptr,&replacement);CHECK(ApplyTextEdits("a$",matches.matches)==replacement);
     options.regex=true;options.query="(a+)+$";matches=TextQuery(options).Find(std::string(10000,'a')+"!");CHECK(!matches.error.empty());CHECK(matches.matches.empty());
 }
+// Go to Line accepts exactly "line" or "line:column" (#24).
+static void LineColumns() {
+    auto parsed=[](const char* text){auto value=ParseLineColumn(text);return value?std::to_string(value->line)+":"+std::to_string(value->column):std::string("invalid");};
+    CHECK(parsed("12")=="12:0");CHECK(parsed(" 3 : 7 ")=="3:7");CHECK(parsed("1:5")=="1:5");
+    for(auto bad:{"","2abc","2:3x","x","0","1:0",":4","-1","+2","1:","1:2:3","1.5","12345678901","2 3"}) CHECK(parsed(bad)=="invalid");
+}
 static void PathFilters() {
     // Each **/ independently spans zero or more directories (#11).
     ProjectSearchOptions include,exclude;include.include="a/**/b/**/c";exclude.exclude="a/**/b/**/c";
@@ -188,4 +194,4 @@ static void WorkspaceEdits() {
     auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
     CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
-int main() { try { Queries();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();LineColumns();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }

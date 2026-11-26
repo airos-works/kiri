@@ -75,6 +75,8 @@ public:
     const std::string& SearchError() const { return fSearchError; }
     void ClearSearchHighlights();
     void GoTo(size_t line,size_t column=1,bool focus=true);
+    // Column as the status bar shows it: tabs expanded to the tab width (Go to Line).
+    void GoToVisualColumn(size_t line,size_t column,bool focus=true);
 private:
     void LayoutMinimap();
     MinimapView* fMinimap=nullptr;

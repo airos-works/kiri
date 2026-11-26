@@ -2,6 +2,7 @@
 #include "core/LanguageProtocol.h"
 #include <atomic>
 #include <memory>
+#include <optional>
 
 namespace kiri {
 struct SearchOptions {
@@ -15,6 +16,11 @@ struct TextMatches {
 };
 // PCRE2 UTF-8, Unicode properties, CR/LF/CRLF anchors. Positions are byte offsets.
 // Regex replacements: $0..$99, ${name}, $$, \\n, \\r, \\t, \\\\.
+// "line" or "line:column" as typed in Go to Line, both counted from 1, with
+// optional surrounding spaces. Anything else (a trailing "abc", a zero, a
+// sign, an overflow) is rejected. column is 0 when it was not given.
+struct LineColumn { size_t line=0,column=0; };
+std::optional<LineColumn> ParseLineColumn(std::string_view text);
 class TextQuery {
 public:
     explicit TextQuery(const SearchOptions& options);

@@ -1098,8 +1098,11 @@ void Workspace::MessageReceived(BMessage* message) {
         case kProjectSearch:Search(true);break;
         case kGoToLine:PromptLine();break;
         case kGoToResult: {
+            // The status bar's "Ln, Col" round-trips: its column expands tabs.
             const char* value;if(editor && message->FindString("value",&value)==B_OK) {
-                size_t line=1,column=1;std::istringstream input(value);input>>line;if(input.peek()==':') { input.get();input>>column; }editor->GoTo(line,column);
+                auto location=ParseLineColumn(value);
+                if(!location) Notice(std::string("Go to Line: enter a line number or line:column, such as 12 or 12:5 (not \"")+value+"\").");
+                else editor->GoToVisualColumn(location->line,location->column);
             }
             break;
         }
