@@ -17,6 +17,7 @@
 #include <TextView.h>
 #include <Window.h>
 #include <algorithm>
+#include <set>
 namespace kiri {
 namespace {
 constexpr uint32 kCommitFile='gdfi';
@@ -123,6 +124,7 @@ void GitView::SetRepository(std::string root,const std::string& error) {
     if(fJobs) { fJobs->Cancel("status");fJobs->Cancel("history");fJobs->Cancel("diff"); }
     fFiles.clear();fCommits.clear();fGraph.Clear();ClearList(fChanges);ClearList(fHistory);
     fCommitHash.clear();fCommitFiles.clear();fComparisonFile->SetEnabled(false);fDiff->Clear("Select a changed file or commit to inspect its diff.");
+    fRefsSignature.clear();fHistoryShown.clear(); // a different repository always loads its history
     fStatus->SetText(error.empty()?"This folder is not a Git repository.":error.c_str());
     fStatus->SetToolTip(error.c_str());fMore->SetEnabled(false);
     Refresh();
@@ -133,24 +135,36 @@ void GitView::Refresh() {
     fStatus->SetText("Reading working tree…");
     fJobs->Submit([this,root,generation](const auto& cancel) {
         GitRepository git(root);auto status=git.Status(&cancel);auto branch=git.Run({"branch","--show-current"},&cancel);
-        return [this,generation,status=std::move(status),branch=std::move(branch)] {
+        // History depends on the refs and HEAD only: working-tree changes
+        // (a saved file) leave loaded pages alone.
+        auto refs=git.Run({"for-each-ref","--format=%(objectname) %(refname)"},&cancel);auto head=git.Run({"rev-parse","--verify","--quiet","HEAD"},&cancel);
+        auto signature=refs.output+"\n"+head.output;
+        return [this,generation,status=std::move(status),branch=std::move(branch),signature] {
             if(generation!=fStatusRequest) return;
             if(!status.ok()) { fStatus->SetText(status.diagnostic().c_str());return; }
-            auto selected=fChanges->CurrentSelection();std::string selectedPath=selected>=0 && size_t(selected)<fFiles.size()?fFiles[selected].path:"";
+            // Keep every still-changed selected path selected, and the scroll position.
+            std::set<std::string> selectedPaths;
+            for(int32 n=0;;++n) { auto row=fChanges->CurrentSelection(n);if(row<0) break;if(size_t(row)<fFiles.size()) selectedPaths.insert(fFiles[row].path); }
+            auto scroll=fChanges->Bounds().LeftTop();
+            // Neither clearing the old rows (which deselects them) nor
+            // restoring the selection may replace an inspected commit's diff.
+            BMessage* selection=fChanges->SelectionMessage()?new BMessage(*fChanges->SelectionMessage()):nullptr;fChanges->SetSelectionMessage(nullptr);
             fFiles=ParseGitStatus(status.output);ClearList(fChanges);
             for(auto& file:fFiles) fChanges->AddItem(new ChangeItem(file,&fTheme));
-            if(fCommitHash.empty()) { auto found=std::find_if(fFiles.begin(),fFiles.end(),[&](const auto& file){return file.path==selectedPath;});if(found!=fFiles.end()) fChanges->Select(found-fFiles.begin());else { ++fDiffRequest;fDiff->Clear("Select a changed file or commit to inspect its diff."); } }
+            bool kept=false;for(size_t i=0;i<fFiles.size();++i) if(selectedPaths.count(fFiles[i].path)) { fChanges->Select(i,true);kept=true; }
+            fChanges->SetSelectionMessage(selection);fChanges->ScrollTo(scroll);
+            if(fCommitHash.empty()) { if(kept) LoadDiff();else { ++fDiffRequest;fDiff->Clear("Select a changed file or commit to inspect its diff."); } }
             std::string name=branch.output;while(!name.empty() && name.back()=='\n') name.pop_back();
             fStatus->SetText((name+" · "+std::to_string(fFiles.size())+" changed files").c_str());
+            if(signature!=fRefsSignature || fHistoryPath!=fHistoryShown) { fRefsSignature=signature;LoadHistory(false); }
         };
     },"status");
-    LoadHistory(false);
 }
 void GitView::ShowFileHistory(const std::string& path) { fHistoryPath=path;LoadHistory(false); }
 void GitView::LoadHistory(bool more) {
     if(!fJobs || fRoot.empty() || (more && fHistoryBusy)) return;
     fHistoryBusy=true;fMore->SetEnabled(false);
-    if(!more) { fCommits.clear();fGraph.Clear();ClearList(fHistory); }
+    if(!more) { fCommits.clear();fGraph.Clear();ClearList(fHistory);fHistoryShown=fHistoryPath; }
     auto root=fRoot,path=fHistoryPath;auto generation=++fHistoryRequest;size_t skip=fCommits.size();
     fHistoryTitle->SetText(path.empty()?"HISTORY · ALL BRANCHES":("HISTORY · "+path).c_str());
     fJobs->Submit([this,root,path,generation,skip](const auto& cancel) {

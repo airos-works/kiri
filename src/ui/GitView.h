@@ -37,6 +37,9 @@ private:
     DiffView* fDiff;
     BMenuField* fComparisonFile;
     std::string fCommitHash;
+    // Refs and HEAD when history was last loaded, and the path it was for:
+    // a refresh reloads history only when either changes.
+    std::string fRefsSignature,fHistoryShown;
     std::vector<GitDiffFile> fCommitFiles;
     std::vector<GitFile> fFiles;
     std::vector<Commit> fCommits;
