@@ -71,6 +71,10 @@ static void MonitorTests(const std::string& root) {
     fs::create_directories(root+"/nested");Put(root+"/nested/one.txt","first");ProjectMonitor monitor(root);
     for(int i=0;i<4;++i) monitor.Poll();CHECK(!monitor.Poll().contents);
     Put(root+"/nested/one.txt","second!");auto modified=monitor.Poll();CHECK(modified.contents && modified.changedDirectories.empty());
+    // A sibling that sorts before .gitignore is a content change only (#44).
+    Put(root+"/nested/.env","A=1");Put(root+"/nested/.gitignore","build/\n");CHECK(!monitor.Poll().changedDirectories.empty());
+    Put(root+"/nested/.env","A=12");auto env=monitor.Poll();CHECK(env.contents);CHECK(env.changedDirectories.empty());
+    Put(root+"/nested/.gitignore","build/\nout/\n");auto ignore=monitor.Poll();CHECK(ignore.contents);CHECK(ignore.changedDirectories.size()==1);
     Put(root+"/nested/two.txt","new");CHECK(!monitor.Poll().changedDirectories.empty());
     fs::rename(root+"/nested/two.txt",root+"/nested/renamed.txt");CHECK(!monitor.Poll().changedDirectories.empty());
     fs::remove(root+"/nested/renamed.txt");CHECK(!monitor.Poll().changedDirectories.empty());

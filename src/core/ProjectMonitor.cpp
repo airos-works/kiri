@@ -43,9 +43,12 @@ ProjectChanges ProjectMonitor::Poll(const std::vector<std::string>& priority,con
                 else result.limited=true;
             } else if(!entry.symlink) {
                 // The listing's own metadata read; no second stat per file.
-                const auto& stamp=entry.stamp;Mix(state.contents,entry.name);
-                for(auto value:{stamp.inode,stamp.size,uint64_t(stamp.seconds),uint64_t(stamp.nanoseconds)}) Mix(state.contents,std::to_string(value));
-                if(entry.name==".gitignore") Mix(state.names,std::to_string(state.contents));
+                const auto& stamp=entry.stamp;uint64_t own=14695981039346656037ULL;
+                for(auto value:{stamp.inode,stamp.size,uint64_t(stamp.seconds),uint64_t(stamp.nanoseconds)}) Mix(own,std::to_string(value));
+                Mix(state.contents,entry.name);Mix(state.contents,std::to_string(own));
+                // Ignore rules change membership, so .gitignore's own stamp
+                // (not the running hash of the files before it) joins the names.
+                if(entry.name==".gitignore") Mix(state.names,std::to_string(own));
                 if(stamp.exists) newest=std::max(newest,stamp.seconds);
             }
         }
