@@ -58,9 +58,13 @@ public:
         const char* bytes=nullptr;if(message->FindString("bytes",&bytes)!=B_OK || !bytes || !*bytes) return B_DISPATCH_MESSAGE;
         if(bytes[0]==B_ENTER) { fTarget.SendMessage(fAccept);return B_SKIP_MESSAGE; }
         if(!fResults || (bytes[0]!=B_UP_ARROW && bytes[0]!=B_DOWN_ARROW)) return B_DISPATCH_MESSAGE;
-        auto index=fResults->CurrentSelection();index=index<0?0:index+(bytes[0]==B_DOWN_ARROW?1:-1);
-        if(fResults->CountItems()) fResults->Select(std::clamp(index,int32(0),fResults->CountItems()-1));
-        fResults->ScrollToSelection();return B_SKIP_MESSAGE;
+        // Step between results, over the disabled file headings; stop at the
+        // ends. Without a selection, Down starts at the first result, Up at the last.
+        int32 step=bytes[0]==B_DOWN_ARROW?1:-1,count=fResults->CountItems(),current=fResults->CurrentSelection();
+        int32 index=current<0?(step>0?0:count-1):current+step;
+        while(index>=0 && index<count && !fResults->ItemAt(index)->IsEnabled()) index+=step;
+        if(index>=0 && index<count) { fResults->Select(index);fResults->ScrollToSelection(); }
+        return B_SKIP_MESSAGE;
     }
 private:BMessenger fTarget;uint32 fAccept;BListView* fResults;
 };
@@ -157,7 +161,7 @@ public:
             fTarget.SendMessage(&request);
         } else if(message->what==kQueryResult || message->what==kQueryPreview) {
             int32 selected=fResults->CurrentSelection();
-            if(selected<0 && !fRows.empty()) selected=fSearch?1:0;
+            if(selected<0) for(size_t i=0;i<fRows.size();++i) if(fRows[i]>=0) { selected=i;break; }
             if(selected>=0 && selected<int32(fRows.size()) && fRows[selected]>=0) {
                 auto& match=fMatches[fRows[selected]];BMessage request(kOpenFile);request.AddString("path",(fs::path(fRoot)/match.path).c_str());
                 // Search results jump to their match; Open Quickly opens the file as it is.

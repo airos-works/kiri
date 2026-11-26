@@ -826,6 +826,18 @@ struct WorkspaceTestAccess {
         Wait(*w,[&]{return inspect([](BWindow& window) { return dynamic_cast<BListView*>(window.FindView("results"))->CurrentSelection()==2; });});
         type("query","\n");Wait(*w,[&]{return !search.IsValid() && w->fPendingOpen.empty();});CHECK(w->Current()->path==file);
         CHECK(w->Current()->editor->SendMessage(SCI_LINEFROMPOSITION,w->Current()->editor->SendMessage(SCI_GETCURRENTPOS))==1);
+        // Up and Down skip file headings between one-hit files and stop at
+        // both ends of the list, with focus kept in the query (#40).
+        {std::ofstream(root+"/second.txt")<<"only once\n";std::ofstream(root+"/third.txt")<<"once more\n";}
+        auto three=std::make_shared<ProjectIndex>();three->paths={"example.txt","second.txt","third.txt"};w->SetIndex(three,true);
+        w->Search(true);search=w->fSearchWindows.back();type("query","once");
+        auto selection=[&]{int row=-2;inspect([&](BWindow& window){row=dynamic_cast<BListView*>(window.FindView("results"))->CurrentSelection();return true;});return row;};
+        Wait(*w,[&]{return inspect([](BWindow& window) { auto* results=dynamic_cast<BListView*>(window.FindView("results"));return results && results->CountItems()==4; });});
+        CHECK(selection()==1);
+        auto key=[&](char code,int expected){type("query",std::string(1,code).c_str());Wait(*w,[&]{return selection()==expected;});CHECK(selection()==expected);};
+        key(B_DOWN_ARROW,3);key(B_DOWN_ARROW,3);key(B_UP_ARROW,1);key(B_UP_ARROW,1);key(B_DOWN_ARROW,3);
+        CHECK(inspect([](BWindow& window){return window.CurrentFocus()==dynamic_cast<BTextControl*>(window.FindView("query"))->TextView();}));
+        type("query","\n");Wait(*w,[&]{return !search.IsValid() && w->fPendingOpen.empty();});CHECK(w->Current()->path==root+"/third.txt");
         // Open Quickly shares query controls: moving to its list must not accept it.
         w->Search(false);search=w->fSearchWindows.back();type("query","example");
         Wait(*w,[&]{return inspect([](BWindow& window) { auto* results=dynamic_cast<BListView*>(window.FindView("results"));return results && results->CountItems()==1; });});
