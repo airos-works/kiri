@@ -141,6 +141,16 @@ static void IndentationAndGuides(Editor* editor) {
     settings.indentation={true,3,4};editor->ApplySettings(settings);editor->SetText("value");editor->SendMessage(SCI_SETSEL,0,0);editor->SendMessage(SCI_TAB);CHECK(editor->Text()=="\t value");
     editor->SendMessage(SCI_SETSEL,7,7);editor->InsertNewline();CHECK(editor->Text()=="\t value\n\t ");
     editor->SetText("\t");editor->SendMessage(SCI_SETSEL,1,1);editor->PasteText("one\n   two");CHECK(editor->Text()=="\tone\n\t\ttwo");editor->SendMessage(SCI_UNDO);CHECK(editor->Text()=="\t" && !editor->Dirty());
+    // Paste Without Reindenting keeps recipe tabs and whitespace-only lines (#17).
+    {
+        settings.indentation={false,2,2};editor->ApplySettings(settings);std::string recipe="\tgcc -c a.c\n   \n\tgcc -o a a.o\n";
+        editor->SetText("all:\n");editor->SendMessage(SCI_SETSEL,5,5);editor->PasteText(recipe);CHECK(editor->Text()!="all:\n"+recipe);
+        editor->SendMessage(SCI_UNDO);CHECK(editor->Text()=="all:\n" && !editor->Dirty());
+        editor->SendMessage(SCI_SETSEL,5,5);editor->PasteText(recipe,false);CHECK(editor->Text()=="all:\n"+recipe);
+        editor->SendMessage(SCI_UNDO);CHECK(editor->Text()=="all:\n" && !editor->Dirty());
+        editor->SetText("all:\r\n",false,SC_EOL_CRLF);editor->SendMessage(SCI_SETSEL,6,6);editor->PasteText("\tone\n\ttwo",false);CHECK(editor->Text()=="all:\r\n\tone\r\n\ttwo");
+        settings.indentation={true,3,4};editor->ApplySettings(settings);
+    }
     // Multiple carets receive their own indentation in a single undo group.
     settings.indentation={false,2,2};editor->ApplySettings(settings);editor->SetText("  one\n    two");editor->SendMessage(SCI_SETSEL,5,5);editor->SendMessage(SCI_ADDSELECTION,13,13);editor->InsertNewline();
     CHECK(editor->Text()=="  one\n  \n    two\n    ");CHECK(editor->SendMessage(SCI_GETSELECTIONS)==2);editor->SendMessage(SCI_UNDO);CHECK(editor->Text()=="  one\n    two" && !editor->Dirty());

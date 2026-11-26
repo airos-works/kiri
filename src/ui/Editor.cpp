@@ -363,6 +363,8 @@ void Editor::ContextMenu(BPoint where) {
     menu.AddItem(new BMenuItem("Copy GitHub Permalink",new BMessage(kCopyPermalink)));
     menu.AddItem(new BMenuItem("File History",new BMessage(kFileHistory)));
     menu.AddSeparatorItem();
+    auto* verbatim=new BMenuItem("Paste Without Reindenting",new BMessage(kPasteVerbatim));verbatim->SetEnabled(!SendMessage(SCI_GETREADONLY));menu.AddItem(verbatim);
+    menu.AddSeparatorItem();
     menu.AddItem(new BMenuItem("Find…",new BMessage(kFind)));
     menu.AddItem(new BMenuItem("Document Settings…",new BMessage(kDocumentSettings)));
     menu.AddItem(new BMenuItem("Go to Line…",new BMessage(kGoToLine)));

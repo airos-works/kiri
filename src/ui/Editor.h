@@ -41,7 +41,9 @@ public:
     DocumentStyle EffectiveStyle() const;
     bool FilterEditingInput(BMessage* message);
     void InsertNewline();
-    void PasteText(const std::string& text);
+    // reindent=false keeps the clipboard's leading tabs, spaces and
+    // whitespace-only lines exactly (Paste Without Reindenting).
+    void PasteText(const std::string& text,bool reindent=true);
     void SetLanguage(const std::string& path,bool large=false);
     void SetText(const std::string& bytes,bool readOnly=false,int eol=2);
     std::shared_ptr<EditorLoader> CreateLoader(bool large);
@@ -77,11 +79,13 @@ public:
     void GoTo(size_t line,size_t column=1,bool focus=true);
     // Column as the status bar shows it: tabs expanded to the tab width (Go to Line).
     void GoToVisualColumn(size_t line,size_t column,bool focus=true);
+    // The clipboard as one paste; false for multiple or rectangular
+    // selections, which keep Scintilla's own paste.
+    bool PasteClipboard(bool reindent=true);
 private:
     void LayoutMinimap();
     MinimapView* fMinimap=nullptr;
     bool fLayingOutMinimap=false;
-    bool PasteClipboard();
     void ReplaceSelections(const std::vector<std::string>& replacements);
     void Style(int id,rgb_color color,bool bold=false);
     void UpdateMarginWidth();

@@ -98,8 +98,11 @@ For a multiline paste of at most 8 MiB into a line's leading whitespace, Kiri
 removes common clipboard indentation, aligns following lines to the destination,
 and writes indentation with the effective tabs/spaces setting. Relative column
 indentation is preserved; Kiri does not guess the source's indentation width.
-Inline and larger pastes retain their indentation. Paste line endings follow
-the destination document. Multiple selections and rectangular selections retain
+Inline and larger pastes retain their indentation. **Edit → Paste Without
+Reindenting** (also in the editor's context menu) keeps the clipboard's leading
+tabs, spaces and whitespace-only lines exactly, for Makefile recipes, Python or
+Markdown code blocks; one Undo removes either kind of paste. Paste line endings
+follow the destination document. Multiple selections and rectangular selections retain
 Scintilla's native clipboard behavior. These actions affect inserted text only.
 
 ## Column guides

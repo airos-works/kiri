@@ -336,7 +336,7 @@ BMenuBar* Workspace::BuildMenus() {
     };
     auto* file=new BMenu("File");add(file,"New File",kNewFile,'N');add(file,"Open File…",kOpenFile,'O');add(file,"Open Folder…",kOpenProject,'O',B_SHIFT_KEY);add(file,"Show Launcher…",kShowLauncher);file->AddSeparatorItem();
     add(file,"Save",kSave,'S');add(file,"Save As…",kSaveAs,'S',B_SHIFT_KEY);add(file,"Save All",kSaveAll);add(file,"Close Tab",kCloseTab,'W');add(file,"Keep Open",kKeepTab,'K');add(file,"Reopen Closed Tab",kReopenTab,'W',B_SHIFT_KEY);file->AddSeparatorItem();add(file,"Quit",kQuitApplication,'Q');bar->AddItem(file);
-    auto* edit=new BMenu("Edit");add(edit,"Undo",B_UNDO,'Z');add(edit,"Redo",B_REDO,'Z',B_SHIFT_KEY);edit->AddSeparatorItem();add(edit,"Cut",B_CUT,'X');add(edit,"Copy",B_COPY,'C');add(edit,"Paste",B_PASTE,'V');add(edit,"Select All",B_SELECT_ALL,'A');edit->AddSeparatorItem();
+    auto* edit=new BMenu("Edit");add(edit,"Undo",B_UNDO,'Z');add(edit,"Redo",B_REDO,'Z',B_SHIFT_KEY);edit->AddSeparatorItem();add(edit,"Cut",B_CUT,'X');add(edit,"Copy",B_COPY,'C');add(edit,"Paste",B_PASTE,'V');add(edit,"Paste Without Reindenting",kPasteVerbatim);add(edit,"Select All",B_SELECT_ALL,'A');edit->AddSeparatorItem();
     add(edit,"Format with Prettier",kFormatPrettier);add(edit,"Complete Code",kComplete);add(edit,"Rename Symbol…",kRenameSymbol);add(edit,"Undo Last Project Edit…",kEditUndo);add(edit,"Language Tools…",kShowLanguageTools);
     edit->AddSeparatorItem();add(edit,"Document Settings…",kDocumentSettings);add(edit,"Preferences…",kShowPreferences,',');bar->AddItem(edit);
     auto* view=new BMenu("View");add(view,"Show / Hide Files",kToggleSidebar,'B');add(view,"Show / Hide Terminal",kToggleTerminal,'`');add(view,"Problems",kToggleProblems,'M',B_SHIFT_KEY);add(view,"Source Control",kToggleGit,'G',B_SHIFT_KEY);view->AddSeparatorItem();
@@ -1062,6 +1062,12 @@ void Workspace::MessageReceived(BMessage* message) {
             } else if(focus) focus->MessageReceived(message);
             break;
         }
+        case kPasteVerbatim:
+            // Like Paste, but keeps leading whitespace as copied (Makefile
+            // recipes, Python, Markdown code). Native paste for multiple or
+            // rectangular selections never reindents either.
+            if(editor && !editor->SendMessage(SCI_GETREADONLY)) { if(!editor->PasteClipboard(false)) editor->SendMessage(SCI_PASTE);editor->MakeFocus(); }
+            break;
         case kShowPreferences:ShowPreferences();break;
         case kDocumentSettings:ShowDocumentSettings();break;
         case kApplyDocumentSettings:ApplyDocumentSettings(*message);break;

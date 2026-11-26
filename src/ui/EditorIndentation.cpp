@@ -57,16 +57,16 @@ void Editor::InsertNewline() {
     }
     ReplaceSelections(replacements);
 }
-bool Editor::PasteClipboard() {
+bool Editor::PasteClipboard(bool reindent) {
     // Let Scintilla retain its native column and multiple-selection paste
     // behavior. Reindentation applies to a single ordinary insertion only.
     if(SendMessage(SCI_GETSELECTIONS)!=1 || SendMessage(SCI_SELECTIONISRECTANGLE)) return false;
     if(!be_clipboard || !be_clipboard->Lock()) return false;
     const void* bytes=nullptr;ssize_t count=0;auto* data=be_clipboard->Data();bool found=data && data->FindData("text/plain",B_MIME_TYPE,&bytes,&count)==B_OK && count>=0;
     std::string text;if(found) text.assign(static_cast<const char*>(bytes),count);be_clipboard->Unlock();
-    if(found) PasteText(text);return found;
+    if(found) PasteText(text,reindent);return found;
 }
-void Editor::PasteText(const std::string& input) {
+void Editor::PasteText(const std::string& input,bool reindent) {
     if(SendMessage(SCI_GETREADONLY)) return;
     auto settings=EffectiveStyle().indentation;auto eol=EOL(*this);std::string text;text.reserve(input.size());
     // Match Scintilla's normal paste-ending conversion without touching any
@@ -76,7 +76,7 @@ void Editor::PasteText(const std::string& input) {
     // Reindent only a multiline paste in a line's leading whitespace. Inline
     // pastes and large pastes preserve their indentation. Relative columns in
     // the clipboard are retained, avoiding guessed source indentation widths.
-    if(input.size()<=8*1024*1024 && input.find_first_of("\r\n")!=std::string::npos) {
+    if(reindent && input.size()<=8*1024*1024 && input.find_first_of("\r\n")!=std::string::npos) {
         std::vector<std::string_view> lines;size_t start=0;
         for(size_t i=0;i<=text.size();++i) if(i==text.size() || text.compare(i,eol.size(),eol)==0) {lines.emplace_back(text.data()+start,i-start);if(i<text.size()) i+=eol.size()-1;start=i+1;}
         int base=INT32_MAX;for(auto line:lines) if(line.find_first_not_of(" \t")!=std::string_view::npos) base=std::min(base,Columns(line,settings.tabWidth));
