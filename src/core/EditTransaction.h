@@ -6,7 +6,8 @@ namespace kiri {
 struct EditSnapshot {
     std::string path,text;
     FileStamp stamp;
-    bool bom=false,open=false,readOnly=false;
+    // oversized: an open buffer past the 32 MiB edit limit, captured without text.
+    bool bom=false,open=false,readOnly=false,oversized=false;
     int64_t document=0,revision=0;
     int version=0;
     std::string owner;
@@ -29,8 +30,10 @@ struct EditPlan {
 };
 using SnapshotMap=std::map<std::string,EditSnapshot>; // canonical absolute paths
 EditSnapshot DiskSnapshot(const std::string& path,const std::atomic<bool>* cancel=nullptr);
+// open: the eligible open buffers. Their text is moved into the search, not
+// copied; read-only and oversized buffers are skipped rather than read from disk.
 EditPlan ReplacementPlan(const std::string& root,const ProjectIndex& index,const ProjectSearchOptions& options,
-    const std::string& replacement,const SnapshotMap& open,const std::atomic<bool>* cancel=nullptr);
+    const std::string& replacement,SnapshotMap open,const std::atomic<bool>* cancel=nullptr);
 // Before/after text for reviewing one edit: its line (ended by CR, LF or
 // CRLF), cut to about context bytes on each side of the edit at UTF-8
 // boundaries, so an edit deep in a long minified line stays visible. Omitted

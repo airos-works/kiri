@@ -240,17 +240,20 @@ SearchResult SearchProject(const std::string& root,const ProjectIndex& index,con
         fs::path path=fs::path(root)/relative;std::error_code error;
         if(fs::path(relative).is_absolute() || relative==".." || relative.rfind("../",0)==0 || CanonicalPath(path.string()).rfind(canonicalRoot,0)!=0
                 || fs::is_symlink(path,error)) { ++result.symlinks;++result.skipped;continue; }
-        FileData data;bool fromBuffer=buffers && buffers->count(relative);
-        if(fromBuffer) data=buffers->at(relative);
-        else {
+        // An open buffer is searched in place; only a matched file's text is
+        // copied, into the replacement snapshot.
+        FileData read;const FileData* source=nullptr;bool fromBuffer=false;
+        if(buffers) if(auto found=buffers->find(relative);found!=buffers->end()) { source=&found->second;fromBuffer=true; }
+        if(!fromBuffer) {
             auto size=fs::file_size(path,error);
             if(!error && size>32*1024*1024) { ++result.large;++result.skipped;continue; }
-            data=ReadFile(path.string(),cancel,32*1024*1024);
+            read=ReadFile(path.string(),cancel,32*1024*1024);source=&read;
         }
-        if(!data.ok()) { ++result.unreadable;++result.skipped;continue; }
-        if(data.binary || !data.utf8) { ++result.binary;++result.skipped;continue; }
-        if(!fromBuffer && data.bom) data.bytes.erase(0,3);
-        if(data.bytes.size()>32*1024*1024) { ++result.large;++result.skipped;continue; }
+        if(!source->ok()) { ++result.unreadable;++result.skipped;continue; }
+        if(source->binary || !source->utf8) { ++result.binary;++result.skipped;continue; }
+        if(!fromBuffer && read.bom) read.bytes.erase(0,3);
+        if(source->bytes.size()>32*1024*1024) { ++result.large;++result.skipped;continue; }
+        const FileData& data=*source;
         size_t first=result.matches.size(),line=1;
         for(size_t start=0;start<=data.bytes.size();) {
             if(cancel && cancel->load()) { result.cancelled=true;break; }
@@ -279,7 +282,7 @@ SearchResult SearchProject(const std::string& root,const ProjectIndex& index,con
         if(replacement && first!=result.matches.size()) {
             snapshotBytes+=data.bytes.size();
             if(snapshotBytes>128*1024*1024) { result.error="Replacement preview exceeds 128 MiB. Narrow the folders or filters.";result.matches.clear();result.snapshots.clear();return result; }
-            result.snapshots.emplace(relative,std::move(data));
+            result.snapshots.emplace(relative,fromBuffer?data:std::move(read));
         }
         if(result.truncated || result.cancelled) break;
     }

@@ -139,9 +139,14 @@ private:
     void RememberQuery();
     void SaveSearchHistory(bool now);
     void Search(bool projectSearch);
-    SnapshotMap OpenSnapshots();
+    // Open buffers of every workspace, for a project edit. Under the window
+    // locks only metadata is read first; text is copied only for buffers the
+    // filter accepts (path, length in bytes). Read-only views come without text.
+    using SnapshotFilter=std::function<bool(const std::string& path,size_t length)>;
+    SnapshotMap OpenSnapshots(const SnapshotFilter& eligible={});
+    static SnapshotFilter ReplacementScope(const std::string& root,const ProjectSearchOptions& options);
     EditSnapshot CurrentSnapshot(const EditSnapshot& before);
-    EditSnapshot BufferSnapshot(Document& document);
+    EditSnapshot BufferSnapshot(Document& document,bool text=true);
     bool VisitOpenDocument(const std::string& path,const std::function<void(Workspace&,Document&)>& action);
     std::string ApplyBufferEdit(FileEdit& file,bool restore);
     void RegisterEditWorkspace(bool add);

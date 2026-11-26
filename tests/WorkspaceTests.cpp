@@ -43,6 +43,7 @@
 
 namespace fs=std::filesystem;
 static int checks=0;
+template<class F> static bool Throws(F f) { try { f();return false; }catch(const std::exception&) { return true; } }
 #define CHECK(x) do { ++checks;if(!(x)) throw std::runtime_error(std::string(__FILE__)+":"+std::to_string(__LINE__)+" " #x); } while(0)
 namespace kiri {
 static int LanguageFixture() {
@@ -969,6 +970,19 @@ struct WorkspaceTestAccess {
         auto beforePlan=w->fEditPlan;BMessage rename(kRenameSubmit);rename.AddInt64("serial",w->fRenameSerial);rename.AddString("name","renamed");w->SubmitRename(rename);
         Wait(*w,[&]{return w->fEditPlan!=beforePlan;});CHECK(w->fEditPlan->rename);CHECK(w->fEditPlan->files.size()==2);
         w->Unlock();CHECK(viewer->Lock());viewer->Quit();CHECK(w->Lock());
+        // A replacement preview copies only in-scope buffers (#28): an
+        // unrelated large tab, open independently in two other windows, is
+        // neither copied nor a reason to refuse.
+        {
+            auto large=base+"/unrelated-large.txt";{std::ofstream out(large);std::string row(1023,'z');row+='\n';for(int i=0;i<64*1024;++i) out<<row;}
+            std::vector<Workspace*> others;for(int i=0;i<2;++i) { auto* other=new Workspace(base+"/large-settings-"+std::to_string(i),false);other->Show();CHECK(other->Lock());Open(*other,large);other->Unlock();others.push_back(other); }
+            ProjectSearchOptions scope;scope.query="old";
+            CHECK(Throws([&]{w->OpenSnapshots();})); // two independent buffers of one file
+            auto began=system_time();auto open=w->OpenSnapshots(Workspace::ReplacementScope(root,scope));auto held=system_time()-began;
+            CHECK(!open.count(CanonicalPath(large)));CHECK(open.count(a) && !open.at(a).text.empty());
+            std::cout<<"Replacement snapshots with an unrelated 64 MiB tab in two windows: "<<held/1000<<" ms\n";CHECK(held<1000000);
+            for(auto* other:others) { CHECK(other->Lock());other->Quit(); }
+        }
         w->ApplyProjectEdit();Wait(*w,[&]{return !w->fApplyingEdit;});CHECK(editor->Text().find("const renamed")!=std::string::npos);CHECK(ReadFile(b).bytes=="renamed; renamed;\r\n");
         editor->MakeFocus();Send(*w,B_UNDO);Wait(*w,[&]{return !w->fApplyingEdit;});CHECK(editor->Text()==original);CHECK(ReadFile(b).bytes=="old; old;\r\n");
         auto* other=new Workspace(base+"/other-edit-settings",false);other->Show();CHECK(other->Lock());Open(*other,b);

@@ -94,18 +94,22 @@ bool Workspace::ReserveEditPaths(bool reserve) {
     } else for(auto it=sReservedPaths.begin();it!=sReservedPaths.end();) { if(it->second==self) it=sReservedPaths.erase(it);else ++it; }
     return true;
 }
-EditSnapshot Workspace::BufferSnapshot(Document& document) {
-    EditSnapshot snapshot;snapshot.path=document.path;snapshot.text=document.editor->Text();snapshot.stamp=StatFile(snapshot.path);
+EditSnapshot Workspace::BufferSnapshot(Document& document,bool text) {
+    EditSnapshot snapshot;snapshot.path=document.path;if(text) snapshot.text=document.editor->Text();snapshot.stamp=StatFile(snapshot.path);
     snapshot.bom=document.bom;snapshot.open=true;snapshot.readOnly=document.saving || document.editor->SendMessage(SCI_GETREADONLY);
     snapshot.document=document.id;snapshot.revision=document.editor->InputRevision();snapshot.version=document.serverVersion;snapshot.owner=fSessionToken;return snapshot;
 }
-SnapshotMap Workspace::OpenSnapshots() {
+SnapshotMap Workspace::OpenSnapshots(const SnapshotFilter& eligible) {
     SnapshotMap result;
     for(const auto& target:EditWorkspaces()) {
         if(!target.IsValid()) continue;WindowLock lock(target);auto* owner=dynamic_cast<Workspace*>(lock.looper);if(!owner) continue;
         for(auto& document:owner->fDocuments) {
             if(document->path.empty() || !document->editor) continue;
-            auto snapshot=owner->BufferSnapshot(*document);
+            size_t length=document->editor->SendMessage(SCI_GETLENGTH);
+            if(eligible && !eligible(document->path,length)) continue;
+            bool readOnly=document->saving || document->editor->SendMessage(SCI_GETREADONLY);
+            bool oversized=length>32*1024*1024;
+            auto snapshot=owner->BufferSnapshot(*document,!readOnly && !oversized);snapshot.oversized=oversized;
             if(result.count(snapshot.path)) throw std::runtime_error("This file has independent buffers in multiple windows: "+snapshot.path+". Close one before a project edit.");
             result.emplace(snapshot.path,std::move(snapshot));
         }
@@ -145,6 +149,14 @@ std::string Workspace::ApplyBufferEdit(FileEdit& file,bool restore) {
     }catch(const std::exception& e) { error=e.what(); }
     return error;
 }
+Workspace::SnapshotFilter Workspace::ReplacementScope(const std::string& root,const ProjectSearchOptions& options) {
+    // Only buffers inside the project that the folders and globs select take
+    // part; an unrelated (perhaps huge) tab, in any window, is not copied.
+    return [root,options](const std::string& path,size_t) {
+        auto relative=fs::path(path).lexically_relative(root).string();
+        return !relative.empty() && relative!=".." && relative.rfind("../",0)!=0 && MatchesProjectPath(relative,options);
+    };
+}
 void Workspace::PreviewReplacement(const BMessage& message) {
     if(fApplyingEdit) { Notice("Wait for the current project edit to finish.");return; }
     if(fProject.empty() || String(message,"root")!=fProject) return;
@@ -152,10 +164,10 @@ void Workspace::PreviewReplacement(const BMessage& message) {
     ProjectSearchOptions options;options.query=String(message,"query");options.folders=String(message,"folders");options.include=String(message,"include");options.exclude=String(message,"exclude");
     options.matchCase=Flag(message,"case");options.regex=Flag(message,"regex");options.wholeWord=Flag(message,"word");options.includeIgnored=Flag(message,"ignored");
     auto error=TextQuery(options).ValidateReplacement(replacement);if(!error.empty()) { Notice(error);return; }
-    SnapshotMap open;try { open=OpenSnapshots(); }catch(const std::exception& e) { Notice(e.what());return; }auto serial=++fEditSerial;Notice("Building replacement preview from open buffers and files on disk…");
-    fJobs->Submit([this,root,options,replacement,open=std::move(open),serial](const auto& cancel) {
+    SnapshotMap open;try { open=OpenSnapshots(ReplacementScope(root,options)); }catch(const std::exception& e) { Notice(e.what());return; }auto serial=++fEditSerial;Notice("Building replacement preview from open buffers and files on disk…");
+    fJobs->Submit([this,root,options,replacement,open=std::move(open),serial](const auto& cancel) mutable {
         auto index=IndexProject(root,&cancel,500000,options.includeIgnored);
-        auto plan=std::make_shared<EditPlan>(ReplacementPlan(root,index,options,replacement,open,&cancel));
+        auto plan=std::make_shared<EditPlan>(ReplacementPlan(root,index,options,replacement,std::move(open),&cancel));
         return [this,plan,serial] { if(serial==fEditSerial) ShowEditPreview(plan); };
     },"replace-preview",[this,serial](const std::string& error){if(serial==fEditSerial) Notice(error);});
 }

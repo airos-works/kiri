@@ -26,15 +26,19 @@ EditSnapshot DiskSnapshot(const std::string& path,const std::atomic<bool>* cance
     EditSnapshot snapshot;snapshot.path=CanonicalPath(path);snapshot.text=std::move(data.bytes);snapshot.stamp=data.stamp;snapshot.bom=data.bom;return snapshot;
 }
 EditPlan ReplacementPlan(const std::string& root,const ProjectIndex& index,const ProjectSearchOptions& options,
-    const std::string& replacement,const SnapshotMap& open,const std::atomic<bool>* cancel) {
+    const std::string& replacement,SnapshotMap open,const std::atomic<bool>* cancel) {
     // Never widen (or narrow) the edit scope silently: a failed Git listing
     // has no ignore rules, and a partial index misses files.
     if(!index.error.empty()) throw std::runtime_error("Cannot preview the replacement: "+index.error+". Fix the problem and refresh.");
     if(index.partial) throw std::runtime_error("The project file list is still being built. Retry the preview when indexing finishes.");
     std::map<std::string,FileData> buffers;
-    for(const auto& [path,snapshot]:open) {
+    for(auto& [path,snapshot]:open) {
         auto relative=fs::path(path).lexically_relative(root).string();if(relative.empty() || relative.rfind("../",0)==0) continue;
-        FileData data;data.bytes=snapshot.text;data.stamp=snapshot.stamp;data.bom=snapshot.bom;buffers.emplace(relative,std::move(data));
+        FileData data;data.bytes=std::move(snapshot.text);data.stamp=snapshot.stamp;data.bom=snapshot.bom;
+        // The open view is what the user sees: never fall back to the disk text.
+        if(snapshot.readOnly) data.error="The open document is read-only or being saved";
+        else if(snapshot.oversized) data.error="The open document exceeds the 32 MiB edit limit";
+        buffers.emplace(relative,std::move(data));
     }
     auto result=SearchProject(root,index,options,cancel,20000,&buffers,&replacement);
     if(!result.error.empty()) throw std::runtime_error(result.error);
@@ -44,7 +48,8 @@ EditPlan ReplacementPlan(const std::string& root,const ProjectIndex& index,const
     size_t totalBytes=0;
     for(auto& [relative,data]:result.snapshots) {
         FileEdit file;auto path=CanonicalPath((fs::path(root)/relative).string());
-        if(open.count(path)) file.before=open.at(path);
+        // The search kept a copy of each matched file's text: move it back.
+        if(open.count(path)) { file.before=std::move(open.at(path));file.before.text=std::move(data.bytes); }
         else { file.before.path=path;file.before.text=std::move(data.bytes);file.before.stamp=data.stamp;file.before.bom=data.bom; }
         for(auto& match:result.matches) if(match.path==relative) file.edits.push_back({{match.start,match.end,std::move(match.replacement)},true});
         file.Prepare();totalBytes+=file.before.text.size()+file.after.size();if(totalBytes>128*1024*1024) throw std::runtime_error("Preview exceeds 128 MiB of before/after text. Narrow the scope.");plan.files.push_back(std::move(file));

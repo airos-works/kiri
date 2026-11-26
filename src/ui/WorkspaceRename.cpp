@@ -54,9 +54,11 @@ void Workspace::RenameSymbol(Editor* source) {
     }
     ClearRenameBorrowed();
     auto serial=++fRenameSerial;fRenameDocument=d->id;fRenameCaret=source->SendMessage(SCI_GETCURRENTPOS);fRenameText=source->Text();
-    try { fRenameOpen=OpenSnapshots(); }catch(const std::exception& e) { Notice(e.what());return; }auto root=fProject.empty()?fs::path(d->path).parent_path().string():fProject;
-    fRenameServerKey=d->serverKey;
+    // The server can only edit files of its own language profile.
     const auto* sourceProfile=fLanguageTools.ForFile(d->path);
+    auto served=[this,sourceProfile](const std::string& path,size_t) { auto* profile=fLanguageTools.ForFile(path);return profile && sourceProfile && profile->command==sourceProfile->command; };
+    try { fRenameOpen=OpenSnapshots(served); }catch(const std::exception& e) { Notice(e.what());return; }auto root=fProject.empty()?fs::path(d->path).parent_path().string():fProject;
+    fRenameServerKey=d->serverKey;
     for(const auto& [path,snapshot]:fRenameOpen) if(snapshot.owner!=fSessionToken) {
         const auto* profile=fLanguageTools.ForFile(path);
         if(profile && sourceProfile && profile->command==sourceProfile->command) {
