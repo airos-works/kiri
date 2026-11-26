@@ -207,7 +207,18 @@ struct WorkspaceTestAccess {
             Wait(*w,[&]{editing=dialog();return editing.IsValid();});
             visit(editing,[&](BWindow& window){auto* indent=static_cast<BTextControl*>(window.FindView("indent width"));auto* guides=static_cast<BTextControl*>(window.FindView("guide columns"));indent->SetText("99");guides->SetText("0");command(window,'dchg');CHECK(!static_cast<BButton*>(window.FindView("apply document settings"))->IsEnabled());indent->SetText("2");static_cast<BTextControl*>(window.FindView("tab width"))->SetText("4");guides->SetText("72, 100");static_cast<BCheckBox*>(window.FindView("show minimap"))->SetValue(1);command(window,'dchg');CHECK(static_cast<BButton*>(window.FindView("apply document settings"))->IsEnabled());command(window,'dapp');});
             Wait(*w,[&]{return !editing.IsValid();});CHECK(!w->fEditorSettings.minimap && w->fEditorSettings.indentation.indentWidth==4);CHECK(editor->Matches(text) && editor->InputRevision()==revision);
-            visit(preferences,[&](BWindow& window){auto* preview=static_cast<Editor*>(window.FindView("preferences preview"));CHECK(preview->SendMessage(SCI_GETINDENT)==2 && preview->SendMessage(SCI_GETMULTIEDGECOLUMN,1)==100 && preview->Minimap()->Enabled());if(apply) command(window,'papl');});
+            // The dialog posts its values to the Preferences window and closes;
+            // wait until that window has handled them, then check each value (#32).
+            int indent=0,guide=0;bool minimap=false;
+            auto previewValues=[&] {
+                if(preferences.LockTargetWithTimeout(100000)!=B_OK) return false;BLooper* looper=nullptr;preferences.Target(&looper);
+                auto* preview=static_cast<Editor*>(static_cast<BWindow*>(looper)->FindView("preferences preview"));
+                indent=preview->SendMessage(SCI_GETINDENT);guide=preview->SendMessage(SCI_GETMULTIEDGECOLUMN,1);minimap=preview->Minimap()->Enabled();looper->Unlock();
+                return indent==2 && guide==100 && minimap;
+            };
+            try { Wait(*w,previewValues); }catch(const std::runtime_error&) {} // a lost update fails on its own value below
+            CHECK(indent==2);CHECK(guide==100);CHECK(minimap);
+            if(apply) visit(preferences,[&](BWindow& window){command(window,'papl');});
             if(apply) Wait(*w,[&]{return w->fEditorSettings.minimap;});preferences.SendMessage(B_QUIT_REQUESTED);Wait(*w,[&]{return !preferences.IsValid();});
             CHECK(w->fEditorSettings.minimap==apply);CHECK(editor->SendMessage(SCI_GETINDENT)==(apply?2:4));CHECK(editor->Matches(text) && editor->InputRevision()==revision && editor->Dirty());CHECK(editor->SendMessage(SCI_GETANCHOR)==2 && editor->SendMessage(SCI_GETCURRENTPOS)==6);
         }
