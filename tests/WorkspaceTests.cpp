@@ -382,6 +382,20 @@ struct WorkspaceTestAccess {
     }
     static void MinimapBenchmarks() {
         {
+            // Each wrapped segment of a long line is sampled from its own text (#33).
+            auto* window=new BWindow(BRect(40,40,640,500),"Minimap wrap",B_TITLED_WINDOW,0);auto* editor=new Editor();BLayoutBuilder::Group<>(window,B_VERTICAL,0).Add(editor);
+            EditorSettings settings;settings.minimap=true;editor->ApplySettings(settings);
+            std::string tail;for(int i=0;i<60;++i) tail+="b ";
+            editor->SetText(("    "+std::string(600,'a')+tail+"\nnext\n").c_str());editor->SendMessage(SCI_SETWRAPMODE,SC_WRAP_CHAR);window->Show();CHECK(window->Lock());auto* map=editor->Minimap();
+            auto settle=[&] {window->Unlock();snooze(100000);CHECK(window->Lock());window->UpdateIfNeeded();map->Refresh(true);};
+            settle();auto segments=int(editor->SendMessage(SCI_WRAPCOUNT,0));CHECK(segments>=4);CHECK(map->SampleFirst()==0);
+            CHECK(!map->CellFilled(0,0) && map->CellFilled(0,5)); // the indent, then a run of a
+            CHECK(map->CellFilled(1,0) && map->CellFilled(1,1)); // a middle segment of a, no indent
+            auto last=segments-1;CHECK(map->CellFilled(last,0) || map->CellFilled(last,1));CHECK(!map->CellFilled(last,1) || !map->CellFilled(last,0)); // "b b b": alternating
+            CHECK(map->CellFilled(segments,0) && !map->CellFilled(segments,4)); // "next"
+            window->Quit();
+        }
+        {
             auto* window=new BWindow(BRect(40,40,1050,650),"Minimap layout",B_TITLED_WINDOW,0);auto* editor=new Editor();BLayoutBuilder::Group<>(window,B_VERTICAL,0).Add(editor);
             EditorSettings settings;settings.minimap=true;editor->ApplySettings(settings);editor->SetText("one\n\nthree");window->Show();CHECK(window->Lock());auto* map=editor->Minimap();
             auto settle=[&] {window->Unlock();snooze(100000);CHECK(window->Lock());window->UpdateIfNeeded();map->Refresh(true);};

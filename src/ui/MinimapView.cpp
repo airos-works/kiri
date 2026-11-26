@@ -44,8 +44,11 @@ void MinimapView::Refresh(bool force) {
     for(size_t style=0;style<fPalette.size();++style) {auto color=fEditor->SendMessage(SCI_STYLEGETFORE,style);fPalette[style]={uint8(color),uint8(color>>8),uint8(color>>16),255};}
     auto indentation=fEditor->EffectiveStyle().indentation;
     for(int row=0;row<rows;++row) {
+        // A wrapped line takes several display rows: sample each row's own
+        // segment, not the start of the line again.
         auto line=fEditor->SendMessage(SCI_DOCLINEFROMVISIBLE,sampleFirst+row);
-        auto start=fEditor->SendMessage(SCI_POSITIONFROMLINE,line),end=std::min(start+256,fEditor->SendMessage(SCI_GETLINEENDPOSITION,line));
+        auto subline=sampleFirst+row-fEditor->SendMessage(SCI_VISIBLEFROMDOCLINE,line),segments=fEditor->SendMessage(SCI_WRAPCOUNT,line);
+        auto start=SegmentStart(line,subline),end=std::min(start+256,subline+1<segments?SegmentStart(line,subline+1):fEditor->SendMessage(SCI_GETLINEENDPOSITION,line));
         if(start<0 || end<=start) continue;
         char bytes[514]{};Sci_TextRangeFull range{{start,end},bytes};fEditor->SendMessage(SCI_GETSTYLEDTEXTFULL,0,reinterpret_cast<sptr_t>(&range));
         int column=0;for(sptr_t i=0;i<end-start && column<kColumns;++i) {
@@ -55,6 +58,17 @@ void MinimapView::Refresh(bool force) {
             ++column;
         }
     }
+}
+int64 MinimapView::SegmentStart(int64 line,int64 subline) const {
+    auto start=fEditor->SendMessage(SCI_POSITIONFROMLINE,line);
+    if(subline<=0 || start<0) return start;
+    // Positions on the wrapped segment's display row: Scintilla lays the line
+    // out once (cached) and reports each position's row as its y coordinate.
+    auto base=fEditor->SendMessage(SCI_POINTYFROMPOSITION,0,start),height=fEditor->SendMessage(SCI_TEXTHEIGHT,line);
+    auto target=base+subline*height;
+    sptr_t low=start,high=fEditor->SendMessage(SCI_GETLINEENDPOSITION,line);
+    while(low<high) { auto middle=low+(high-low)/2;if(fEditor->SendMessage(SCI_POINTYFROMPOSITION,0,middle)<target) low=middle+1;else high=middle; }
+    return fEditor->SendMessage(SCI_POSITIONAFTER,fEditor->SendMessage(SCI_POSITIONBEFORE,low)); // a character boundary
 }
 float MinimapView::ContentHeight() const {
     // Reserve one cached row for a partially visible line at the top.

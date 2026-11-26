@@ -29,7 +29,12 @@ public:
     size_t CacheBytes() const {return fCells.capacity()*sizeof(uint16_t);}
     const std::string& Status() const {return fStatus;}
     int64 DisplayLines() const {return fDisplayLines;}
+    // Whether the cached sample has a character drawn at this row and column.
+    bool CellFilled(int row,int column) const {return row>=0 && row<fRows && column>=0 && column<80 && fCells[size_t(row)*80+column];}
+    int64 SampleFirst() const {return fSampleFirst;}
 private:
+    // Start of the subline-th wrapped segment of a document line.
+    int64 SegmentStart(int64 line,int64 subline) const;
     void Timer();
     float ContentHeight() const;
     Editor* fEditor;
