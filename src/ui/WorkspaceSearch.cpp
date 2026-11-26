@@ -39,11 +39,25 @@ void Progress(BMessenger target,const std::string& text,bool busy,int file=-1,co
 SearchOptions Workspace::FindOptions() const { return {fFindText->Text(),bool(fMatchCase->Value()),bool(fRegex->Value()),bool(fWholeWord->Value())}; }
 void Workspace::RememberQuery() {
     auto query=std::string(fFindText->Text());if(query.empty()) return;
+    // Repeating the newest query (Find Next, Replace) changes nothing.
+    if(!fRecentQueries.empty() && fRecentQueries.front()==query) return;
     fRecentQueries.erase(std::remove(fRecentQueries.begin(),fRecentQueries.end(),query),fRecentQueries.end());fRecentQueries.push_front(query);
     while(fRecentQueries.size()>20) fRecentQueries.pop_back();
     auto* menu=fFindHistory->Menu();while(auto* item=menu->RemoveItem(int32(0))) delete item;
     for(const auto& recent:fRecentQueries) { auto* message=new BMessage(kFindHistory);message->AddString("query",recent.c_str());auto* item=new BMenuItem(recent.c_str(),message);item->SetTarget(this);menu->AddItem(item); }
-    Json history=fRecentQueries;SaveFile(fSettings+"/search-history.json",history.dump(),StatFile(fSettings+"/search-history.json"));
+    SaveSearchHistory(false);
+}
+void Workspace::SaveSearchHistory(bool now) {
+    auto path=fSettings+"/search-history.json";Json history=fRecentQueries;auto bytes=history.dump();
+    if(now || !fRecoveryJobs) { SaveFile(path,bytes,StatFile(path));fHistoryPending=0;return; }
+    // Saving flushes and syncs; keep it off the window thread. The recovery
+    // lane runs one job at a time, so writes land in order, and a newer
+    // history replaces a write that has not started yet.
+    auto version=++fHistoryVersion;fHistoryPending=version;
+    fRecoveryJobs->Submit([this,path,bytes,version](const auto&) {
+        SaveFile(path,bytes,StatFile(path));
+        return [this,version] { if(fHistoryPending==version) fHistoryPending=0; };
+    },"search-history");
 }
 void Workspace::RunFind(uint32 command) {
     auto* d=Current();auto* tab=CurrentTab();if(!d || !d->editor || !tab || !tab->editor) { fFindStatus->SetText("No text document");return; }

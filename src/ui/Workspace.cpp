@@ -623,6 +623,7 @@ bool Workspace::QuitRequested() {
         if(choice==2) { fQuitWhenSaved=true;Save(d.get());return false; }
         fQuitDiscarded[d->id]=d->editor->Revision();
     }
+    if(fHistoryPending) SaveSearchHistory(true); // a change still waiting for the lane
     fRecoveryTimer.reset();fSnapshot.reset();fRecoveryJobs.reset();
     for(const auto& d:fDocuments) if(!d->recoveryFile.empty()) fRetiredDrafts.insert(d->recoveryFile);
     for(const auto& file:fRetiredDrafts) unlink(file.c_str());

@@ -839,7 +839,10 @@ struct WorkspaceTestAccess {
         other->Current()->editor->MakeFocus();w->Unlock();Send(*other,B_UNDO);Wait(*other,[&]{return !other->fApplyingEdit;});CHECK(other->Current()->editor->Text()==otherOriginal);other->Quit();CHECK(w->Lock());CHECK(editor->Text()==original);
         // Query generations and project changes cannot revive stale disk results.
         for(int i=0;i<23;++i) { w->fFindText->SetText(("recent "+std::to_string(i)).c_str());w->RememberQuery(); }
-        CHECK(w->fRecentQueries.size()==20);CHECK(Json::parse(ReadFile(settings+"/search-history.json").bytes).size()==20);
+        Wait(*w,[&]{return !w->fHistoryPending;});CHECK(w->fRecentQueries.size()==20);CHECK(Json::parse(ReadFile(settings+"/search-history.json").bytes).size()==20);
+        // Fifty Find Next commands with one query write the history once (#31).
+        {auto writes=w->fHistoryVersion;w->fFindText->SetText("recent 3");for(int i=0;i<50;++i) w->RunFind(kFindNext);CHECK(w->fHistoryVersion-writes==1);
+        Wait(*w,[&]{return !w->fHistoryPending;});auto saved=Json::parse(ReadFile(settings+"/search-history.json").bytes);CHECK(saved.size()==20 && saved[0]=="recent 3" && saved[1]=="recent 22");}
         w->Search(true);auto search=w->fSearchWindows.back();
         auto inspectSearch=[&](const std::function<bool(BWindow&)>& action) {
             if(search.LockTargetWithTimeout(100000)!=B_OK) return false;

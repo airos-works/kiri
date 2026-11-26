@@ -135,6 +135,7 @@ private:
     SearchOptions FindOptions() const;
     void RunFind(uint32 command);
     void RememberQuery();
+    void SaveSearchHistory(bool now);
     void Search(bool projectSearch);
     SnapshotMap OpenSnapshots();
     EditSnapshot CurrentSnapshot(const EditSnapshot& before);
@@ -307,6 +308,7 @@ private:
     BStringView* fFindStatus;
     BMenuField* fFindHistory;
     std::deque<std::string> fRecentQueries;
+    int64 fHistoryVersion=0,fHistoryPending=0; // search-history writes
     std::unique_ptr<BMessageRunner> fFindTimer;
     int64 fFindScopeView=0;
     std::vector<BMessenger> fSearchWindows;
