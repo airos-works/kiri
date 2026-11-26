@@ -184,10 +184,12 @@ for project-local versions, other languages, configuration and limits.
   shells. Close a session with its tab’s close control; closing the last session
   hides the panel, and **Terminal → Show / Hide** opens it again.
 - Each terminal is a real PTY with UTF-8, ANSI colors, scrollback and alternate-screen
-  programs. Drag across rows to select output; Copy and Paste use the system clipboard.
+  programs. Drag to select output by character, double-click a word such as a path,
+  or triple-click whole rows; Copy and Paste use the system clipboard.
 
 Haiku's default Command modifier is **Alt**. Menus show configured shortcuts:
-Alt+P opens files quickly, Alt+F opens find/replace, Alt+Shift+F searches the project,
+Alt+P opens files quickly, Alt+F opens find/replace (seeded with a one-line selection),
+Alt+E and Alt+Shift+E find the next and previous match, Alt+Shift+F searches the project,
 Alt+G goes to a line, Alt+S saves, Alt+Shift+T opens a terminal, and Alt+W closes
 the focused terminal or document tab. In the find bar,
 Enter in the replacement field replaces one match; **All** replaces every match

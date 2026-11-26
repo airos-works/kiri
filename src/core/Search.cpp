@@ -62,6 +62,7 @@ struct TextQuery::Impl {
         return result;
     }
 };
+std::string QuoteRegex(std::string_view text) { return Quote(text); }
 std::optional<LineColumn> ParseLineColumn(std::string_view text) {
     auto trim=[](std::string_view& value){ while(!value.empty() && (value.front()==' ' || value.front()=='\t')) value.remove_prefix(1);while(!value.empty() && (value.back()==' ' || value.back()=='\t')) value.remove_suffix(1); };
     auto number=[](std::string_view value)->size_t {

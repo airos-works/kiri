@@ -3,10 +3,14 @@
 ## Find in a document
 
 **Search → Find / Replace** (Alt+F on the default Haiku keymap) opens the find
-bar. Use **Case**, **Regex**, **Whole Word**, and **In Selection** to set the
-matching rules. Next and Previous wrap at the end of the current scope. Matches
-are highlighted and counted; pattern and replacement errors appear in the bar.
-**Recent** keeps the last 20 submitted queries across restarts.
+bar. A selection within one line becomes the query (escaped when **Regex** is
+on, so punctuation stays literal); with no selection the previous query is
+kept. Pressed again from the find field, it hides the bar. Use **Case**,
+**Regex**, **Whole Word**, and **In Selection** to set the matching rules.
+**Find Next** (Alt+E) and **Find Previous** (Alt+Shift+E) work from the editor
+too, and wrap at the end of the current scope. Matches are highlighted and
+counted; pattern and replacement errors appear in the bar. **Recent** keeps
+the last 20 submitted queries across restarts.
 
 Select text in the editor before enabling **In Selection**. The bar captures
 that range; navigating matches does not shrink it. Replacement adjusts the end

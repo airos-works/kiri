@@ -39,6 +39,10 @@ static void Queries() {
     options.regex=true;options.query="(a+)+$";matches=TextQuery(options).Find(std::string(10000,'a')+"!");CHECK(!matches.error.empty());CHECK(matches.matches.empty());
 }
 // Go to Line accepts exactly "line" or "line:column" (#24).
+static void QuotedSelections() {
+    SearchOptions options;options.regex=true;options.matchCase=true;
+    for(std::string text:{"a.b(c)","x*+?[y]{2}","$^|\\path","日本.語"}) { options.query=QuoteRegex(text);auto found=TextQuery(options).Find("-"+text+"-"+text);CHECK(found.error.empty());CHECK(found.matches.size()==2);CHECK(found.matches[0].start==1); }
+}
 static void LineColumns() {
     auto parsed=[](const char* text){auto value=ParseLineColumn(text);return value?std::to_string(value->line)+":"+std::to_string(value->column):std::string("invalid");};
     CHECK(parsed("12")=="12:0");CHECK(parsed(" 3 : 7 ")=="3:7");CHECK(parsed("1:5")=="1:5");
@@ -194,4 +198,4 @@ static void WorkspaceEdits() {
     auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
     CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
-int main() { try { Queries();LineColumns();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();QuotedSelections();LineColumns();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }

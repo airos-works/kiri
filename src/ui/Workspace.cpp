@@ -264,7 +264,7 @@ Workspace::Workspace(const std::string& settingsDirectory,bool restoreSession,co
         .AddGroup(B_HORIZONTAL,5).Add(fFindText).Add(fReplaceText)
             .Add(new BButton("previous","‹",new BMessage(kFindPrevious))).Add(new BButton("next","›",new BMessage(kFindNext)))
             .Add(new BButton("replace one","Replace",new BMessage(kReplace))).Add(new BButton("replace all","All",new BMessage(kReplaceAll)))
-            .Add(new BButton("hide find","×",new BMessage(kFind))).End()
+            .Add(new BButton("hide find","×",[]{auto* hide=new BMessage(kFind);hide->AddBool("hide",true);return hide;}())).End()
         .AddGroup(B_HORIZONTAL,8).Add(fMatchCase).Add(fRegex).Add(fWholeWord).Add(fInSelection).Add(fFindHistory).Add(fFindStatus).AddGlue();
     auto* editorPanel=new BView("editor panel",0);
     fExternalBar=new BView("external change bar",0);
@@ -346,7 +346,7 @@ BMenuBar* Workspace::BuildMenus() {
     add(view,"Markdown Preview",kMarkdownPreview,'V',B_SHIFT_KEY);add(view,"Focus Markdown Preview",kMarkdownFocus,'V',B_CONTROL_KEY);view->AddSeparatorItem();
     fThemes=ThemeMenu("Color Theme",kTheme,0);fThemes->SetLabelFromMarked(false);
     view->AddItem(fThemes);add(view,"Zoom In",kZoomIn,'+');add(view,"Zoom Out",kZoomOut,'-');add(view,"Word Wrap",kWrap);add(view,"Show Whitespace",kShowWhitespace);bar->AddItem(view);
-    auto* search=new BMenu("Search");add(search,"Find / Replace",kFind,'F');add(search,"Find Next",kFindNext);add(search,"Find Previous",kFindPrevious);add(search,"Open Quickly…",kQuickOpen,'P');add(search,"Search Project…",kProjectSearch,'F',B_SHIFT_KEY);add(search,"Go to Line…",kGoToLine,'G');add(search,"Go to Symbol…",kBrowseSymbols,'R',B_SHIFT_KEY);search->AddSeparatorItem();add(search,"Next Problem",kNextProblem);add(search,"Previous Problem",kPreviousProblem);add(search,"Restart Language Servers",kRestartLanguages);search->AddSeparatorItem();add(search,"Compare External Changes…",kExternalCompare);add(search,"Open External Backups…",kExternalBackups);bar->AddItem(search);
+    auto* search=new BMenu("Search");add(search,"Find / Replace",kFind,'F');add(search,"Find Next",kFindNext,'E');add(search,"Find Previous",kFindPrevious,'E',B_SHIFT_KEY);add(search,"Open Quickly…",kQuickOpen,'P');add(search,"Search Project…",kProjectSearch,'F',B_SHIFT_KEY);add(search,"Go to Line…",kGoToLine,'G');add(search,"Go to Symbol…",kBrowseSymbols,'R',B_SHIFT_KEY);search->AddSeparatorItem();add(search,"Next Problem",kNextProblem);add(search,"Previous Problem",kPreviousProblem);add(search,"Restart Language Servers",kRestartLanguages);search->AddSeparatorItem();add(search,"Compare External Changes…",kExternalCompare);add(search,"Open External Backups…",kExternalBackups);bar->AddItem(search);
     auto* git=new BMenu("Git");add(git,"Show Source Control",kToggleGit);add(git,"File History",kFileHistory);add(git,"Copy GitHub Permalink",kCopyPermalink,'L',B_SHIFT_KEY);git->AddSeparatorItem();add(git,"Refresh",kGitRefresh);add(git,"Fetch",kGitFetch);add(git,"Pull (Fast-forward Only)",kGitPull);add(git,"Push",kGitPush);bar->AddItem(git);
     auto* term=new BMenu("Terminal");add(term,"New Terminal",kNewTerminal,'T',B_SHIFT_KEY);add(term,"Close Terminal",kCloseTerminal);term->AddSeparatorItem();add(term,"Show / Hide",kToggleTerminal);bar->AddItem(term);
     return bar;
@@ -676,9 +676,24 @@ void Workspace::ShowPreferences() {
     auto* window=new PreferencesWindow(BMessenger(this),fEditorSettings,Frame(),fSettings);
     fPreferencesWindow=BMessenger(window);window->Show();
 }
-void Workspace::ShowFind() {
-    if(!fFindBar->IsHidden()) { fFindBar->Hide();for(auto& d:fDocuments) if(d->editor) d->editor->ClearSearchHighlights();if(Current() && Current()->editor) Current()->editor->MakeFocus();return; }
-    fFindBar->Show();RunFind(kFindChanged);fFindText->MakeFocus();fFindText->TextView()->SelectAll();
+void Workspace::ShowFind(bool hide) {
+    auto* tab=CurrentTab();auto* editor=tab?tab->editor:nullptr;
+    bool findFocused=fFindText->TextView()->IsFocus();
+    // Find / Replace hides the bar only from the bar itself (or its ×); from
+    // the editor it (re)starts a search, so a selection can seed an open bar.
+    if(!fFindBar->IsHidden() && (hide || findFocused || !editor)) { fFindBar->Hide();for(auto& d:fDocuments) if(d->editor) d->editor->ClearSearchHighlights();if(Current() && Current()->editor) Current()->editor->MakeFocus();return; }
+    // Seed the query with a single-line selection; otherwise keep the last
+    // query. With In Selection on, the selection is the scope, not the query.
+    if(editor && !fInSelection->Value()) {
+        auto start=editor->SendMessage(SCI_GETSELECTIONSTART),end=editor->SendMessage(SCI_GETSELECTIONEND);
+        if(end>start && end-start<=1024 && editor->SendMessage(SCI_LINEFROMPOSITION,start)==editor->SendMessage(SCI_LINEFROMPOSITION,end)) {
+            std::string text(end-start,'\0');Sci_TextRangeFull range{{Sci_Position(start),Sci_Position(end)},text.data()};
+            text.push_back('\0');range.lpstrText=text.data();editor->SendMessage(SCI_GETTEXTRANGEFULL,0,reinterpret_cast<sptr_t>(&range));text.resize(end-start);
+            fFindText->SetText((fRegex->Value()?QuoteRegex(text):text).c_str());
+        }
+    }
+    if(fFindBar->IsHidden()) fFindBar->Show(); // Show and Hide nest on Haiku
+    RunFind(kFindChanged);fFindText->MakeFocus();fFindText->TextView()->SelectAll();
 }
 void Workspace::Search(bool search) {
     if(fProject.empty()) { Notice("Open a project folder first.");return; }
@@ -1072,7 +1087,7 @@ void Workspace::MessageReceived(BMessage* message) {
         case kTerminalState:fTerminal->UpdateTabs();break;
         case kTerminalFocus:++fFocusSerial;break;
         case kRefresh:if(!fProject.empty()) { LoadDirectory(fProject);fGit->Refresh();RefreshIndex(); }break;
-        case kFind:ShowFind();break;
+        case kFind:ShowFind(message->GetBool("hide",false));break;
         case kFindChanged:case kFindScope:case kFindRefresh:case kFindHistory:
         case kFindNext:case kFindPrevious:case kReplace:case kReplaceAll:
             if(message->what==kFindHistory) { const char* query=nullptr;if(message->FindString("query",&query)==B_OK) fFindText->SetText(query); }

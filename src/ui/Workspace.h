@@ -133,7 +133,7 @@ private:
     void RefreshDocumentConfig(Document& document,bool force=false);
     void ApplyDocumentSettings(BMessage& message);
     void UpdateDocumentStyle(Document& document);
-    void ShowFind();
+    void ShowFind(bool hide=false);
     SearchOptions FindOptions() const;
     void RunFind(uint32 command);
     void RememberQuery();

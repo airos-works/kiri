@@ -20,6 +20,8 @@ struct TextMatches {
 // optional surrounding spaces. Anything else (a trailing "abc", a zero, a
 // sign, an overflow) is rejected. column is 0 when it was not given.
 struct LineColumn { size_t line=0,column=0; };
+// Escapes text so a regular expression matches it literally.
+std::string QuoteRegex(std::string_view text);
 std::optional<LineColumn> ParseLineColumn(std::string_view text);
 class TextQuery {
 public:
