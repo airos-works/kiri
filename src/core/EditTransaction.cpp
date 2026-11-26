@@ -23,6 +23,10 @@ EditSnapshot DiskSnapshot(const std::string& path,const std::atomic<bool>* cance
 }
 EditPlan ReplacementPlan(const std::string& root,const ProjectIndex& index,const ProjectSearchOptions& options,
     const std::string& replacement,const SnapshotMap& open,const std::atomic<bool>* cancel) {
+    // Never widen (or narrow) the edit scope silently: a failed Git listing
+    // has no ignore rules, and a partial index misses files.
+    if(!index.error.empty()) throw std::runtime_error("Cannot preview the replacement: "+index.error+". Fix the problem and refresh.");
+    if(index.partial) throw std::runtime_error("The project file list is still being built. Retry the preview when indexing finishes.");
     std::map<std::string,FileData> buffers;
     for(const auto& [path,snapshot]:open) {
         auto relative=fs::path(path).lexically_relative(root).string();if(relative.empty() || relative.rfind("../",0)==0) continue;

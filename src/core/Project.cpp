@@ -52,7 +52,7 @@ DirectoryResult ListDirectory(const std::string& path, const std::atomic<bool>* 
 ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* cancel, size_t limit,bool includeIgnored,const IndexProgress& progress) {
     ProjectIndex result;
     auto cancelled=[&]{return cancel && cancel->load();};
-    ProcessOptions opts;opts.directory=root;opts.cancel=cancel;opts.outputLimit=64*1024*1024;
+    ProcessOptions opts;opts.directory=root;opts.cancel=cancel;opts.outputLimit=64*1024*1024;opts.environment={"LC_ALL=C","GIT_OPTIONAL_LOCKS=0"};
     std::vector<std::string> command={"git","ls-files","-z","--cached","--others"};
     if(!includeIgnored) command.push_back("--exclude-standard");
     auto git=RunProcess(command,opts);
@@ -71,6 +71,16 @@ ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* canc
         return result;
     }
     if(cancelled()) return result;
+    // Only a folder outside any repository (or a system without git) uses the
+    // plain walk silently. A repository whose listing failed (timeout, output
+    // limit, damaged index) would lose its ignore rules, so the walk below is
+    // marked as an unreliable scope: quick-open keeps working, edits refuse it.
+    auto message=git.diagnostic();
+    bool repository=git.exitCode!=127 && message.find("not a git repository")==std::string::npos && message.find("Not a git repository")==std::string::npos;
+    if(repository) {
+        auto line=message.substr(0,message.find('\n'));if(line.size()>200) line=line.substr(0,200)+"…";
+        result.error="Git could not list the project files ("+line+"); ignore rules are unavailable";
+    }
     const std::set<std::string> excluded={".git",".hg",".svn","node_modules",".cache",".vm","__pycache__",".venv","vendor","build","dist","target"};
     std::vector<fs::path> pending{root};
     using Clock=std::chrono::steady_clock;auto report=Clock::now()+std::chrono::milliseconds(500);

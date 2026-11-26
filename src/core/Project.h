@@ -17,6 +17,8 @@ struct DirectoryEntry { std::string name, path; bool directory=false, symlink=fa
 struct DirectoryResult { std::vector<DirectoryEntry> entries; std::string error; };
 DirectoryResult ListDirectory(const std::string& path, const std::atomic<bool>* cancel=nullptr);
 // partial: indexing is still running and paths holds the files found so far.
+// error: the listing is not authoritative (the root could not be read, or Git
+// failed in a repository and paths came from a walk without ignore rules).
 struct ProjectIndex { std::vector<std::string> paths; bool truncated=false, partial=false; std::string error; };
 using IndexProgress=std::function<void(const ProjectIndex&)>;
 // progress receives snapshots while a slow directory walk runs (after about

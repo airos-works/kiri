@@ -81,6 +81,22 @@ static void ProjectQueries() {
     ProjectIndex parent;parent.paths={"a.ts"};CHECK(SearchProject(temp.path+"/tests",parent,plain).matches.size()==1);
     index.paths.push_back("src/unavailable");options.include="";result=SearchProject(temp.path,index,options);CHECK(result.unreadable==1);
 }
+// A failed Git listing must not silently include ignored files (#29).
+static void GitListingFailure() {
+    Temp temp;ProcessOptions process;process.directory=temp.path;CHECK(RunProcess({"git","init","-q"},process).ok());
+    fs::create_directories(temp.path+"/scratch");Write(temp.path+"/.gitignore","scratch/\n");Write(temp.path+"/a.txt","name\n");Write(temp.path+"/scratch/b.txt","name\n");
+    ProjectSearchOptions options;options.query="name";
+    auto index=IndexProject(temp.path);CHECK(index.error.empty());CHECK(index.paths.size()==2);
+    CHECK(ReplacementPlan(temp.path,index,options,"other",{}).files.size()==1);
+    Write(temp.path+"/.git/index","damaged"); // git ls-files now fails inside a repository
+    index=IndexProject(temp.path);CHECK(!index.error.empty());
+    CHECK(std::find(index.paths.begin(),index.paths.end(),"scratch/b.txt")!=index.paths.end()); // the walk still serves quick-open
+    CHECK(Throws([&]{ReplacementPlan(temp.path,index,options,"other",{});}));
+    // A folder outside any repository is an ordinary walk without an error.
+    Temp plain;Write(plain.path+"/c.txt","name\n");auto walked=IndexProject(plain.path);CHECK(walked.error.empty());CHECK(walked.paths.size()==1);
+    CHECK(ReplacementPlan(plain.path,walked,options,"other",{}).files.size()==1);
+    walked.partial=true;CHECK(Throws([&]{ReplacementPlan(plain.path,walked,options,"other",{});}));
+}
 static void Transactions() {
     Temp temp;auto a=temp.path+"/a.ts",b=temp.path+"/b.ts";Write(a,"\xef\xbb\xbf" "old old\r\n");Write(b,"old\n");chmod(a.c_str(),0640);
 #ifdef __HAIKU__
@@ -123,4 +139,4 @@ static void WorkspaceEdits() {
     edit["changes"][FileURI(path)][0]["range"]=Range(0,3,99);CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
     edit["changes"][FileURI(path)]=Json::array({change["edits"][0],change["edits"][0]});CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
 }
-int main() { try { Queries();PathFilters();ProjectQueries();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();PathFilters();ProjectQueries();GitListingFailure();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
