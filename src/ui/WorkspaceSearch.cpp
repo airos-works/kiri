@@ -208,7 +208,9 @@ void Workspace::ProjectEditStep() {
             Progress(fEditWindow,"",false,int(i),&file);
         }
         auto summary=std::to_string(changed)+(restore?" files restored":" files changed")+", "+std::to_string(failed)+" failed"+(fCancelEdit?" · cancelled":"")+". Recovery: "+plan->journal;
-        fJobs->Submit([this,plan,summary](const auto&){auto error=WriteEditJournal(*plan);return [this,summary,error] {
+        fJobs->Submit([this,plan,summary](const auto&){
+            std::string error;for(size_t i=0;i<plan->files.size() && error.empty();++i) error=AppendEditJournal(*plan,i);
+            return [this,summary,error] {
             fApplyingEdit=false;ReserveEditPaths(false);
             for(const auto& file:fEditPlan->files) if(file.applied) {
                 try { VisitOpenDocument(file.before.path,[&](Workspace& owner,Document&){owner.fLastEdit=fEditPlan;}); }catch(...) {}
@@ -231,9 +233,9 @@ void Workspace::ProjectEditStep() {
     // The write-ahead journal must reach disk before any corresponding edit.
     file.pending=true;
     fJobs->Submit([this,plan,index,restore,diskOperation](const auto&) {
-        auto error=WriteEditJournal(*plan);auto& file=plan->files[index];
+        auto error=AppendEditJournal(*plan,index);auto& file=plan->files[index];
         if(error.empty() && diskOperation) error=ApplyDiskEdit(file,restore);
-        if(error.empty() && diskOperation) error=WriteEditJournal(*plan);
+        if(error.empty() && diskOperation) error=AppendEditJournal(*plan,index);
         return [this,plan,index,restore,diskOperation,error]() mutable {
             auto& file=plan->files[index];
             if(error.empty() && !diskOperation) error=ApplyBufferEdit(file,restore);

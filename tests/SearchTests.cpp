@@ -119,7 +119,7 @@ static void Transactions() {
     auto plan=ReplacementPlan(temp.path,index,options,"new",open);CHECK(plan.files.size()==2);
     auto& disk=plan.files[0];auto& buffer=plan.files[1];CHECK(disk.before.bom);CHECK(buffer.before.text=="old dirty old\n");
     disk.edits[1].selected=false;disk.Prepare();CHECK(disk.after=="new old\r\n");CHECK(buffer.after=="new dirty new\n");
-    plan.journal=temp.path+"/journal.json";CHECK(WriteEditJournal(plan).empty());disk.pending=true;CHECK(WriteEditJournal(plan).empty());
+    plan.journal=temp.path+"/journal.json";CHECK(WriteEditJournal(plan).empty());disk.pending=true;CHECK(AppendEditJournal(plan,0).empty());
     CHECK(ApplyDiskEdit(disk).empty());CHECK(ReadFile(a).bytes=="\xef\xbb\xbf" "new old\r\n");CHECK(ReadFile(a).bom);CHECK(ReadFile(b).bytes=="old\n");
     struct stat st{};stat(a.c_str(),&st);CHECK((st.st_mode&0777)==0640);
 #ifdef __HAIKU__
@@ -130,6 +130,38 @@ static void Transactions() {
     auto current=buffer.before;current.revision++;CHECK(!ValidateEdit(buffer,current).empty());current=buffer.before;current.text+="newer";CHECK(!ValidateEdit(buffer,current).empty());
     auto fresh=ReplacementPlan(temp.path,index,options,"new",open);Write(a,"external\n");CHECK(!ApplyDiskEdit(fresh.files[0]).empty());CHECK(ReadFile(a).bytes=="external\n");
     Write(a,"old old\r\n");fresh=ReplacementPlan(temp.path,index,options,"new",open);CHECK(ApplyDiskEdit(fresh.files[0]).empty());Write(a,"newer\n");CHECK(!ApplyDiskEdit(fresh.files[0],true).empty());CHECK(ReadFile(a).bytes=="newer\n");
+}
+// Journal bytes grow with the files changed, and every interruption point
+// still recovers for Undo Last Project Edit (#8).
+static void JournalScaling() {
+    for(size_t count:{size_t(10),size_t(100)}) {
+        Temp temp;EditPlan plan;plan.journal=temp.path+"/journal.json";size_t text=0;
+        for(size_t i=0;i<count;++i) {
+            auto path=temp.path+"/f"+std::to_string(i)+".txt";Write(path,std::string(20000,'a')+"\n");
+            FileEdit file;file.before=DiskSnapshot(path);file.edits.push_back({{0,1,"b"},true});file.Prepare();text+=file.before.text.size()+file.after.size();plan.files.push_back(std::move(file));
+        }
+        CHECK(WriteEditJournal(plan).empty());
+        for(size_t i=0;i<count;++i) {
+            auto& file=plan.files[i];file.pending=true;CHECK(AppendEditJournal(plan,i).empty());
+            CHECK(ApplyDiskEdit(file).empty());CHECK(AppendEditJournal(plan,i).empty());
+        }
+        for(size_t i=0;i<count;++i) CHECK(AppendEditJournal(plan,i).empty());
+        auto written=fs::file_size(plan.journal)+fs::file_size(plan.journal+".log");
+        CHECK(written<text+text/10+300*count*3); // one snapshot plus small transitions
+        auto recovered=ReadEditJournal(plan.journal);CHECK(recovered.files.size()==count);
+        for(auto& file:recovered.files) { CHECK(file.applied && !file.pending);CHECK(file.writtenStamp==StatFile(file.before.path)); }
+    }
+    // Interrupted between the pending mark, the file replacement and completion.
+    Temp temp;auto a=temp.path+"/a.txt",b=temp.path+"/b.txt";Write(a,"old a\n");Write(b,"old b\n");EditPlan plan;plan.journal=temp.path+"/journal.json";
+    for(auto path:{a,b}) { FileEdit file;file.before=DiskSnapshot(path);file.edits.push_back({{0,3,"new"},true});file.Prepare();plan.files.push_back(std::move(file)); }
+    CHECK(WriteEditJournal(plan).empty());plan.files[0].pending=true;CHECK(AppendEditJournal(plan,0).empty());
+    auto crashed=ReadEditJournal(plan.journal);CHECK(crashed.files[0].pending && !crashed.files[0].applied);CHECK(ReadFile(a).bytes=="old a\n");
+    CHECK(ApplyDiskEdit(plan.files[0]).empty()); // replaced on disk, completion not yet logged
+    crashed=ReadEditJournal(plan.journal);CHECK(crashed.files[0].applied);CHECK(!crashed.files[1].applied);
+    CHECK(ApplyDiskEdit(crashed.files[0],true).empty());CHECK(ReadFile(a).bytes=="old a\n"); // Undo still works
+    CHECK(ApplyDiskEdit(plan.files[1]).empty());CHECK(AppendEditJournal(plan,1).empty());
+    {std::ofstream log(plan.journal+".log",std::ios::app);log<<"{\"file\":0,\"appl";} // a torn final line
+    crashed=ReadEditJournal(plan.journal);CHECK(crashed.files[1].applied);CHECK(ApplyDiskEdit(crashed.files[1],true).empty());CHECK(ReadFile(b).bytes=="old b\n");
 }
 static void WorkspaceEdits() {
     Temp temp;auto path=temp.path+"/日本語 #%.ts";Write(path,"😀 old\n");auto snapshot=DiskSnapshot(path);snapshot.open=true;snapshot.version=3;
@@ -156,4 +188,4 @@ static void WorkspaceEdits() {
     auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
     CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
-int main() { try { Queries();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }

@@ -1,5 +1,9 @@
 #include "core/EditTransaction.h"
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
 #include <filesystem>
 #include <set>
 #include <stdexcept>
@@ -154,29 +158,67 @@ namespace {
 Json StampJSON(const FileStamp& s) { return Json::array({s.device,s.inode,s.size,s.seconds,s.nanoseconds,s.exists}); }
 FileStamp ReadStamp(const Json& s) { return {s.at(0),s.at(1),s.at(2),s.at(3),s.at(4),s.at(5)}; }
 }
+namespace {
+Json StateJSON(const FileEdit& file) {
+    return {{"writtenStamp",StampJSON(file.writtenStamp)},{"applied",file.applied},{"restored",file.restored},{"pending",file.pending},{"status",file.status},{"error",file.error}};
+}
+void ReadState(FileEdit& file,const Json& item) {
+    file.writtenStamp=ReadStamp(item.at("writtenStamp"));file.applied=item.at("applied");file.restored=item.at("restored");
+    file.pending=item.at("pending");file.status=item.at("status");file.error=item.at("error");
+}
+std::string LogPath(const std::string& journal) { return journal+".log"; }
+}
 std::string WriteEditJournal(const EditPlan& plan) {
     try {
-        Json data={{"format",1},{"title",plan.title},{"root",plan.root},{"rename",plan.rename},{"files",Json::array()}};
-        for(const auto& file:plan.files) data["files"].push_back({{"path",file.before.path},{"before",file.before.text},{"after",file.after},
-            {"bom",file.before.bom},{"open",file.before.open},{"stamp",StampJSON(file.before.stamp)},{"writtenStamp",StampJSON(file.writtenStamp)},
-            {"applied",file.applied},{"restored",file.restored},{"pending",file.pending},{"status",file.status},{"error",file.error}});
+        Json data={{"format",2},{"title",plan.title},{"root",plan.root},{"rename",plan.rename},{"files",Json::array()}};
+        for(const auto& file:plan.files) {
+            Json item={{"path",file.before.path},{"before",file.before.text},{"after",file.after},{"bom",file.before.bom},{"open",file.before.open},{"stamp",StampJSON(file.before.stamp)}};
+            item.update(StateJSON(file));data["files"].push_back(std::move(item));
+        }
+        // A new snapshot starts without transitions.
+        if(unlink(LogPath(plan.journal).c_str())!=0 && errno!=ENOENT) return "Cannot reset the project edit log: "+std::string(strerror(errno));
         return SaveFile(plan.journal,data.dump(),StatFile(plan.journal));
+    }catch(const std::exception& e) { return e.what(); }
+}
+std::string AppendEditJournal(const EditPlan& plan,size_t index) {
+    try {
+        if(index>=plan.files.size()) return "Invalid project edit file.";
+        Json line=StateJSON(plan.files[index]);line["file"]=index;
+        auto bytes=line.dump()+"\n"; // dump() escapes newlines, so one line per transition
+        int fd=open(LogPath(plan.journal).c_str(),O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC,0600);
+        if(fd<0) return "Cannot open the project edit log: "+std::string(strerror(errno));
+        size_t written=0;
+        while(written<bytes.size()) {
+            auto n=write(fd,bytes.data()+written,bytes.size()-written);
+            if(n>0) written+=size_t(n);else if(n<0 && errno==EINTR) continue;else { auto error=std::string(strerror(errno));close(fd);return "Cannot write the project edit log: "+error; }
+        }
+        // The transition must be durable before the file operation it announces.
+        if(fsync(fd)!=0) { auto error=std::string(strerror(errno));close(fd);return "Cannot flush the project edit log: "+error; }
+        if(close(fd)!=0) return "Cannot close the project edit log: "+std::string(strerror(errno));
+        return {};
     }catch(const std::exception& e) { return e.what(); }
 }
 EditPlan ReadEditJournal(const std::string& path) {
     auto data=ReadFile(path,nullptr,512*1024*1024);if(!data.ok()) throw std::runtime_error(data.error);
-    auto json=Json::parse(data.bytes);if(json.at("format")!=1) throw std::runtime_error("Unknown project edit recovery format");
+    auto json=Json::parse(data.bytes);if(json.at("format")!=1 && json.at("format")!=2) throw std::runtime_error("Unknown project edit recovery format");
     EditPlan plan;plan.title=json.at("title");plan.root=json.at("root");plan.rename=json.at("rename");plan.journal=path;
     for(auto& item:json.at("files")) {
         FileEdit file;file.before.path=item.at("path");file.before.text=item.at("before");file.after=item.at("after");file.before.bom=item.at("bom");file.before.open=item.at("open");
-        file.before.stamp=ReadStamp(item.at("stamp"));file.writtenStamp=ReadStamp(item.at("writtenStamp"));
-        file.applied=item.at("applied");file.restored=item.at("restored");file.pending=item.at("pending");file.status=item.at("status");file.error=item.at("error");
+        file.before.stamp=ReadStamp(item.at("stamp"));ReadState(file,item);plan.files.push_back(std::move(file));
+    }
+    // Replay transitions in order. A crash can leave only the last line torn.
+    auto log=ReadFile(LogPath(path),nullptr,512*1024*1024);
+    if(log.ok()) for(size_t start=0;start<log.bytes.size();) {
+        auto end=log.bytes.find('\n',start);if(end==std::string::npos) break;
+        try { auto line=Json::parse(log.bytes.substr(start,end-start));size_t index=line.at("file");if(index<plan.files.size()) ReadState(plan.files[index],line); }catch(...) {}
+        start=end+1;
+    }
+    for(auto& file:plan.files) {
         if(file.pending && file.before.open) file.applied=true;
         if(file.pending && !file.before.open) {
             // A crash may occur after rename(2) but before the journal update.
             try { auto current=DiskSnapshot(file.before.path);if(current.text==file.after && current.bom==file.before.bom) { file.applied=true;file.writtenStamp=current.stamp; } }catch(...) {}
         }
-        plan.files.push_back(std::move(file));
     }
     return plan;
 }

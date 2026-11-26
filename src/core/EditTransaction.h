@@ -39,6 +39,12 @@ EditPlan WorkspaceEditPlan(const Json& edit,PositionEncoding encoding,
     const std::function<EditSnapshot(const std::string&)>& snapshot);
 std::string ValidateEdit(const FileEdit& file,const EditSnapshot& current,bool restore=false);
 std::string ApplyDiskEdit(FileEdit& file,bool restore=false);
+// The recovery journal is written once: every file's before/after text and
+// initial state. Each later change of one file's state is a small line that
+// AppendEditJournal adds (and flushes) to plan.journal+".log", so the bytes
+// written grow with the files actually changed, not with the whole plan
+// per step. ReadEditJournal replays those lines over the snapshot.
 std::string WriteEditJournal(const EditPlan& plan);
+std::string AppendEditJournal(const EditPlan& plan,size_t file);
 EditPlan ReadEditJournal(const std::string& path);
 }
