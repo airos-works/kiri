@@ -72,6 +72,17 @@ void Files() {
     int sparse=open(path.c_str(),O_WRONLY);CHECK(sparse>=0);CHECK(ftruncate(sparse,2LL*1024*1024*1024)==0);close(sparse);
     auto binary=ReadFile(path.string());CHECK(binary.ok());CHECK(binary.binary);CHECK(binary.stamp.size==2ULL*1024*1024*1024);CHECK(binary.bytes.size()==65536);
 }
+// Named pipes are skipped by the index and never block a reader (#39).
+void SpecialFiles() {
+    Temporary t;Put(fs::path(t.path)/"plain.txt","needle\n");auto fifo=(fs::path(t.path)/"pipe.txt").string();CHECK(mkfifo(fifo.c_str(),0600)==0);
+    alarm(20); // a blocking open would otherwise hang the suite
+    auto index=IndexProject(t.path);CHECK(index.paths==std::vector<std::string>{"plain.txt"});
+    auto listing=ListDirectory(t.path);for(auto& entry:listing.entries) CHECK(entry.regular==(entry.name=="plain.txt"));
+    auto data=ReadFile(fifo);CHECK(!data.ok());CHECK(data.error=="This is not a regular file.");
+    index.paths.push_back("pipe.txt");auto search=SearchProject(t.path,index,"needle",true);CHECK(search.matches.size()==1);CHECK(search.unreadable==1);
+    CHECK(!SaveFile(fifo,"text",StatFile(fifo)).empty());
+    alarm(0);
+}
 void LinksAndGraph() {
     for(const auto& remote:{"git@github.com:owner/repo.git","https://github.com/owner/repo.git","ssh://git@github.com/owner/repo.git","ssh://git@github.com:22/owner/repo.git"})
         CHECK(GitHubRepository(remote)=="https://github.com/owner/repo");
@@ -203,7 +214,7 @@ void TerminalIsolation() {
 }
 int main() {
     signal(SIGPIPE,SIG_IGN);
-    try { Processes();Files();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalIsolation();Recovery(); }
+    try { Processes();Files();SpecialFiles();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalIsolation();Recovery(); }
     catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
     std::cout<<"Passed "<<checks<<" checks: processes, safe saves, Git, project search and real PTY terminal.\n";
 }

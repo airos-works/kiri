@@ -12,7 +12,8 @@
 namespace kiri {
 // stamp is the entry's own lstat result: one metadata read per entry, which
 // matters on network volumes. Only symlinks need a second read (directory).
-struct DirectoryEntry { std::string name, path; bool directory=false, symlink=false; FileStamp stamp; };
+// regular: a plain file (not a pipe, socket or device), from the same lstat.
+struct DirectoryEntry { std::string name, path; bool directory=false, symlink=false, regular=false; FileStamp stamp; };
 struct DirectoryResult { std::vector<DirectoryEntry> entries; std::string error; };
 DirectoryResult ListDirectory(const std::string& path, const std::atomic<bool>* cancel=nullptr);
 // partial: indexing is still running and paths holds the files found so far.

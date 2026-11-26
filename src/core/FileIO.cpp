@@ -39,6 +39,18 @@ FileStamp Stamp(const struct stat& s) {
         static_cast<uint64_t>(s.st_size),s.st_mtim.tv_sec,s.st_mtim.tv_nsec,true};
 }
 std::string Error(const char* action) { return std::string(action)+": "+strerror(errno); }
+// Opens without blocking on a pipe, socket or device and without making a
+// terminal the controlling one. Returns -2 when the path is not a regular
+// file, else the descriptor (in blocking mode) or -1 with errno set.
+int OpenRegular(const std::string& path,int flags) {
+    int fd=open(path.c_str(),flags|O_CLOEXEC|O_NONBLOCK|O_NOCTTY);
+    if (fd<0) return -1;
+    struct stat s{};
+    if (fstat(fd,&s)!=0) { int saved=errno;close(fd);errno=saved;return -1; }
+    if (!S_ISREG(s.st_mode)) { close(fd);return -2; }
+    int mode=fcntl(fd,F_GETFL);if(mode!=-1) fcntl(fd,F_SETFL,mode&~O_NONBLOCK);
+    return fd;
+}
 #ifdef __HAIKU__
 // A volume that cannot store attributes (an SMB share, for one) may still show
 // some it makes up, such as a MIME type from the file's name. Those are not the
@@ -86,10 +98,13 @@ bool IsValidUTF8(std::string_view bytes) {
 FileData ReadFile(const std::string& path, const std::atomic<bool>* cancel, size_t limit,
     const std::function<bool(std::string_view)>& sink) {
     FileData data;
-    int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC);
+    // Nonblocking, so a named pipe or device cannot hold the caller in
+    // open(2) before the type check below; regular files then read normally.
+    int fd=OpenRegular(path,O_RDONLY);
+    if (fd==-2) { data.error="This is not a regular file.";return data; }
     if (fd<0) { data.error=Error("Cannot open file");return data; }
     struct stat s{};
-    if (fstat(fd,&s)!=0 || !S_ISREG(s.st_mode)) { data.error="This is not a regular file.";close(fd);return data; }
+    if (fstat(fd,&s)!=0) { data.error=Error("Cannot inspect file");close(fd);return data; }
     data.stamp=Stamp(s);
     // Most binary formats identify themselves immediately. Keep their preview
     // bounded even when the file is much larger than the text editing limit.
@@ -171,7 +186,8 @@ std::string SaveFileParts(const std::string& inputPath,const std::vector<std::st
     int old=-1;
     struct stat oldStat{};
     if (expected.exists) {
-        old=open(path.c_str(),O_RDONLY|O_CLOEXEC);
+        old=OpenRegular(path,O_RDONLY);
+        if (old==-2) return "This is not a regular file. Save to a different file.";
         if (old<0 || fstat(old,&oldStat)!=0) { if(old>=0) close(old);return Error("Cannot inspect original file"); }
         if (!(oldStat.st_mode&0222)) { close(old);return "The file is read-only. Save to a different file."; }
     }

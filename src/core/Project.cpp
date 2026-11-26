@@ -37,7 +37,7 @@ DirectoryResult ListDirectory(const std::string& path, const std::atomic<bool>* 
             item.stamp={uint64_t(info.st_dev),uint64_t(info.st_ino),uint64_t(info.st_size),info.st_mtim.tv_sec,info.st_mtim.tv_nsec,true};
             item.symlink=S_ISLNK(info.st_mode);
             if(item.symlink) { struct stat target;item.directory=stat(item.path.c_str(),&target)==0 && S_ISDIR(target.st_mode); }
-            else item.directory=S_ISDIR(info.st_mode);
+            else { item.directory=S_ISDIR(info.st_mode);item.regular=S_ISREG(info.st_mode); }
         }
         result.entries.push_back(std::move(item));
     }
@@ -82,7 +82,7 @@ ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* canc
         for(const auto& entry:listing.entries) {
             if(entry.symlink) continue; // no cycles, escaping project, or device reads during indexing
             if(entry.directory) { if(entry.name!=".git" && entry.name!=".hg" && entry.name!=".svn" && (includeIgnored || !excluded.count(entry.name))) pending.emplace_back(entry.path); }
-            else {
+            else if(entry.regular) { // named pipes, sockets and devices are not project files
                 if(result.paths.size()>=limit) { result.truncated=true;return result; }
                 result.paths.push_back(entry.path.compare(0,base.size(),base)==0?entry.path.substr(base.size()):fs::path(entry.path).lexically_relative(root).string());
             }
