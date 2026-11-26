@@ -5,6 +5,8 @@
 #include "ui/TabStrip.h"
 #include "ui/TerminalPanel.h"
 #include "ui/TerminalView.h"
+#include "ui/EditPreviewWindow.h"
+#include <StringItem.h>
 #include <Clipboard.h>
 #include "ui/DiffView.h"
 #include "ui/GitView.h"
@@ -270,6 +272,38 @@ struct WorkspaceTestAccess {
         auto* bar=dynamic_cast<BMenuBar*>(w->FindView("menu"));uint32 modifiers=0;
         CHECK(bar->FindItem(kFindNext)->Shortcut(&modifiers)=='E' && !(modifiers&B_SHIFT_KEY));CHECK(bar->FindItem(kFindPrevious)->Shortcut(&modifiers)=='E' && (modifiers&B_SHIFT_KEY));
         w->Quit();std::cout<<"Find seeding, regex escaping, scope and shortcuts passed.\n";
+    }
+    // A large preview updates only the rows that change (#42) and shows each
+    // edit in context, even deep in a long line (#41).
+    static void EditPreviewRows(const std::string& base) {
+        EditPlan plan;plan.title="Replace in Project";plan.summary="1000 files";
+        for(int i=0;i<1000;++i) {
+            FileEdit file;file.before.path=base+"/preview-"+std::to_string(i)+".txt";file.before.text="value old "+std::to_string(i)+"\n";
+            file.edits.push_back({{6,9,"new"},true});plan.files.push_back(std::move(file));
+        }
+        plan.files[0].before.text=std::string(20000,'x')+"old tail\n";plan.files[0].edits[0].edit={20000,20003,"new"};
+        auto* owner=new BWindow(BRect(0,0,400,300),"preview owner",B_TITLED_WINDOW,0);
+        auto* preview=new EditPreviewWindow(owner,plan,Theme::Builtins()[0],false,1);BMessenger target(preview);
+        CHECK(preview->Lock());CHECK(preview->fList->CountItems()==2000);
+        preview->fList->Select(1);preview->Detail();std::string detail=preview->fDetail->Text();
+        CHECK(detail.find("old tail")!=std::string::npos && detail.find("new tail")!=std::string::npos && detail.size()<6000);
+        preview->fList->Select(1501);preview->fList->ScrollToSelection();auto scroll=preview->fList->Bounds().top;auto* selectedItem=preview->fList->ItemAt(1501);preview->Unlock();
+        auto began=system_time();
+        for(int i=0;i<1000;++i) for(int step=0;step<3;++step) {
+            BMessage progress(kEditPreview);progress.AddString("status","Applying");progress.AddBool("busy",true);progress.AddInt32("file",i);
+            progress.AddString("file_status",step<2?"Applying":"Changed on disk");progress.AddString("error","");target.SendMessage(&progress);
+        }
+        for(int i=0;i<500;++i) { CHECK(preview->Lock());bool done=preview->fPlan.files[999].status=="Changed on disk";if(!done) preview->Unlock();else break;snooze(20000); }
+        auto elapsed=system_time()-began;CHECK(preview->fPlan.files[999].status=="Changed on disk");CHECK(elapsed<5000000);
+        CHECK(preview->fList->CurrentSelection()==1501 && preview->fList->ItemAt(1501)==selectedItem && preview->fList->Bounds().top==scroll);
+        CHECK(std::string(static_cast<BStringItem*>(preview->fList->ItemAt(1998))->Text()).find("Changed on disk")!=std::string::npos);
+        // Include / Exclude changes its own rows in place.
+        BMessage done(kEditPreview);done.AddBool("busy",false);preview->MessageReceived(&done);
+        BMessage toggle(kEditToggle);preview->MessageReceived(&toggle);
+        CHECK(preview->fList->ItemAt(1501)==selectedItem);CHECK(std::string(static_cast<BStringItem*>(selectedItem)->Text()).rfind("    [ ] ",0)==0);
+        CHECK(std::string(static_cast<BStringItem*>(preview->fList->ItemAt(1500))->Text()).rfind("[ ] ",0)==0);CHECK(preview->fApply->IsEnabled());
+        preview->Quit();CHECK(owner->Lock());owner->Quit();
+        std::cout<<"1,000-file preview: 3,000 progress updates in "<<elapsed/1000<<" ms; long-line excerpt passed.\n";
     }
     // Undo back to the saved text retires the draft (#4); a removed binary
     // preview stays out of text recovery and closes without Save (#5).
@@ -1099,7 +1133,7 @@ int main(int argc,char** argv) {
     }
     BApplication application("application/x-vnd.Kiri-workspace-unit-tests");
     char folder[]="/tmp/kiri-workspace-XXXXXX";auto* root=mkdtemp(folder);if(!root) return 1;
-    try { if(argc==2 && std::string(argv[1])=="--terminal-selection") {kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" terminal and problem checks.\n";return 0;}
-        if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
+    try { if(argc==2 && std::string(argv[1])=="--terminal-selection") {kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditPreviewRows(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" terminal and problem checks.\n";return 0;}
+        if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::ProblemNavigation(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::RecoveryStates(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::OpenLocations(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::GoToLine(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::FindSeeding(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditPreviewRows(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
     catch(const std::exception& error) { std::cerr<<error.what()<<" (test files: "<<root<<")\n";return 1; }
 }

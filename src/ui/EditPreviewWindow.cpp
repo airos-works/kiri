@@ -36,29 +36,48 @@ EditPreviewWindow::EditPreviewWindow(BWindow* owner,const EditPlan& plan,const T
         .AddGroup(B_HORIZONTAL,8).Add(fToggle).Add(fRefresh).AddGlue().Add(fCancel).Add(fApply);
     BLayoutBuilder::Group<>(this,B_VERTICAL,0).Add(panel);
     for(auto* button:{fApply,fToggle,fRefresh,fCancel}) button->SetTarget(this);fList->SetTarget(this);
-    ThemeView(panel,theme);Rebuild();ResizeTo(960,690);CenterIn(owner->Frame());Show();
+    // Match positions are computed once per file, through one position index.
+    fMatchText.resize(fPlan.files.size());
+    if(!restore) for(size_t i=0;i<fPlan.files.size();++i) {
+        auto& file=fPlan.files[i];PositionMap positions(file.before.text,PositionEncoding::UTF32);
+        for(auto& item:file.edits) {
+            auto position=positions.Position(item.edit.start);
+            fMatchText[i].push_back(std::to_string(position.line+1)+":"+std::to_string(position.character+1)+"  "
+                +Visible(file.before.text.substr(item.edit.start,item.edit.end-item.edit.start))+" → "+Visible(item.edit.text));
+        }
+    }
+    ThemeView(panel,theme);BuildList();ResizeTo(960,690);CenterIn(owner->Frame());Show();
 }
 EditPreviewWindow::~EditPreviewWindow() { while(auto* item=fList->RemoveItem(int32(0))) delete item; }
 void EditPreviewWindow::SendAction(uint32 command) { BMessage message(command);message.AddInt64("preview",fSerial);fTarget.SendMessage(&message); }
 bool EditPreviewWindow::QuitRequested() { if(fBusy) { SendAction(kEditCancel);fStatus->SetText("Cancelling after the current file finishes…");return false; }return true; }
-void EditPreviewWindow::Rebuild() {
-    auto selection=fList->CurrentSelection();while(auto* item=fList->RemoveItem(int32(0))) delete item;fRows.clear();
-    size_t selected=0;
+std::string EditPreviewWindow::FileLabel(size_t i) const {
+    auto& file=fPlan.files[i];bool any=std::any_of(file.edits.begin(),file.edits.end(),[](const auto& e){return e.selected;});
+    auto label=std::string(any?"[x] ":"[ ] ")+file.before.path+(file.before.open?"  (open buffer)":"  (disk)")+" · "+file.status;
+    if(!file.error.empty()) label+=" · "+file.error;
+    return label;
+}
+std::string EditPreviewWindow::MatchLabel(size_t i,size_t j) const {
+    return std::string(fPlan.files[i].edits[j].selected?"    [x] ":"    [ ] ")+fMatchText[i][j];
+}
+void EditPreviewWindow::BuildList() {
+    while(auto* item=fList->RemoveItem(int32(0))) delete item;fRows.clear();fFileRows.assign(fPlan.files.size(),-1);
     for(size_t i=0;i<fPlan.files.size();++i) {
-        auto& file=fPlan.files[i];auto count=std::count_if(file.edits.begin(),file.edits.end(),[](const auto& e){return e.selected;});selected+=count;
-        auto label=std::string(count?"[x] ":"[ ] ")+file.before.path+(file.before.open?"  (open buffer)":"  (disk)")+" · "+file.status;
-        if(!file.error.empty()) label+=" · "+file.error;
-        fList->AddItem(new BStringItem(label.c_str()));fRows.emplace_back(i,-1);
-        if(!fRestore) for(size_t j=0;j<file.edits.size();++j) {
-            auto& item=file.edits[j];auto position=PositionAt(file.before.text,item.edit.start,PositionEncoding::UTF32);
-            label=std::string(item.selected?"    [x] ":"    [ ] ")+std::to_string(position.line+1)+":"+std::to_string(position.character+1)+"  "
-                +Visible(file.before.text.substr(item.edit.start,item.edit.end-item.edit.start))+" → "+Visible(item.edit.text);
-            fList->AddItem(new BStringItem(label.c_str()));fRows.emplace_back(i,int(j));
-        }
+        fFileRows[i]=fRows.size();fList->AddItem(new BStringItem(FileLabel(i).c_str()));fRows.emplace_back(i,-1);
+        if(!fRestore) for(size_t j=0;j<fPlan.files[i].edits.size();++j) { fList->AddItem(new BStringItem(MatchLabel(i,j).c_str()));fRows.emplace_back(i,int(j)); }
     }
-    fApply->SetEnabled(!fBusy && (fRestore?!fPlan.files.empty():selected>0));
-    if(!fRows.empty()) fList->Select(std::clamp(selection,int32(0),int32(fRows.size()-1)));
+    UpdateApply();
+    if(!fRows.empty()) fList->Select(0);
     Detail();
+}
+void EditPreviewWindow::UpdateRow(int32 row) {
+    if(row<0 || size_t(row)>=fRows.size()) return;
+    auto [i,j]=fRows[row];static_cast<BStringItem*>(fList->ItemAt(row))->SetText((j<0?FileLabel(i):MatchLabel(i,j)).c_str());fList->InvalidateItem(row);
+}
+void EditPreviewWindow::UpdateApply() {
+    bool any=fRestore?!fPlan.files.empty():false;
+    if(!fRestore) for(auto& file:fPlan.files) if(std::any_of(file.edits.begin(),file.edits.end(),[](const auto& e){return e.selected;})) { any=true;break; }
+    fApply->SetEnabled(!fBusy && any);
 }
 void EditPreviewWindow::Detail() {
     auto row=fList->CurrentSelection();if(row<0 || size_t(row)>=fRows.size()) return;
@@ -78,9 +97,12 @@ void EditPreviewWindow::MessageReceived(BMessage* message) {
     else if(message->what==kEditToggle && !fBusy && !fRestore && !fPlan.rename) {
         auto row=fList->CurrentSelection();if(row<0 || size_t(row)>=fRows.size()) return;
         auto [i,j]=fRows[row];auto& file=fPlan.files[i];
-        if(j>=0) file.edits[j].selected=!file.edits[j].selected;
-        else { bool selected=std::any_of(file.edits.begin(),file.edits.end(),[](const auto& e){return e.selected;});for(auto& item:file.edits) item.selected=!selected; }
-        Rebuild();
+        if(j>=0) { file.edits[j].selected=!file.edits[j].selected;UpdateRow(row); }
+        else {
+            bool selected=std::any_of(file.edits.begin(),file.edits.end(),[](const auto& e){return e.selected;});for(auto& item:file.edits) item.selected=!selected;
+            for(size_t k=0;k<file.edits.size();++k) UpdateRow(fFileRows[i]+1+k);
+        }
+        UpdateRow(fFileRows[i]);UpdateApply();Detail();
     } else if(message->what==kEditApply && !fBusy) {
         BMessage apply(kEditApply);apply.AddBool("restore",fRestore);apply.AddInt64("preview",fSerial);
         for(size_t i=0;i<fPlan.files.size();++i) for(size_t j=0;j<fPlan.files[i].edits.size();++j)
@@ -91,8 +113,12 @@ void EditPreviewWindow::MessageReceived(BMessage* message) {
     else if(message->what==kEditPreview) {
         message->FindBool("busy",&fBusy);const char* status=nullptr;if(message->FindString("status",&status)==B_OK) { fStatus->SetText(status);fStatus->SetToolTip(status); }
         int32 file=-1;message->FindInt32("file",&file);
-        if(file>=0 && size_t(file)<fPlan.files.size()) { if(message->FindString("file_status",&status)==B_OK) fPlan.files[file].status=status;if(message->FindString("error",&status)==B_OK) fPlan.files[file].error=status; }
-        fCancel->SetLabel(fBusy?"Cancel remaining":"Close");fToggle->SetEnabled(!fBusy && !fPlan.rename && !fRestore);fRefresh->SetEnabled(!fBusy && !fRestore);Rebuild();
+        if(file>=0 && size_t(file)<fPlan.files.size()) {
+            if(message->FindString("file_status",&status)==B_OK) fPlan.files[file].status=status;if(message->FindString("error",&status)==B_OK) fPlan.files[file].error=status;
+            UpdateRow(fFileRows[file]);
+            auto row=fList->CurrentSelection();if(row>=0 && size_t(row)<fRows.size() && fRows[row].first==size_t(file)) Detail();
+        }
+        fCancel->SetLabel(fBusy?"Cancel remaining":"Close");fToggle->SetEnabled(!fBusy && !fPlan.rename && !fRestore);fRefresh->SetEnabled(!fBusy && !fRestore);UpdateApply();
         bool finished=false;message->FindBool("finished",&finished);if(finished) fApply->SetEnabled(false);
     } else BWindow::MessageReceived(message);
 }
