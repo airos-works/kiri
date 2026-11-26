@@ -35,7 +35,7 @@ void Workspace::OpenMarkdownLink(const BMessage& message) {
             UpdateTabs();SaveSettings();return;
         }
     };
-    OpenFile(path,1,1,true,false,paneID);
+    OpenFile(path,0,0,true,false,paneID);
     if(fPendingOpen.count(path)) fPendingRequests[path].push_back(std::move(finish));else finish();
 }
 }

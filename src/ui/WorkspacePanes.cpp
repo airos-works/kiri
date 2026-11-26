@@ -94,7 +94,9 @@ void Workspace::ShowDocument(Pane& pane,Document& d,size_t line,size_t column,bo
     for(size_t i=0;i<pane.tabs.size();++i) if(pane.tabs[i]->id==id) index=i;
     if(activate) {
         pane.selected=index;pane.cards->SetVisibleItem(index+1);ActivatePane(&pane,focusEditor);
-        fModeLayout->SetVisibleItem(int32(0));if(pane.tabs[index]->editor) pane.tabs[index]->editor->GoTo(line,column,focusEditor);
+        // Without a location the view keeps its caret, selection and scroll.
+        fModeLayout->SetVisibleItem(int32(0));
+        if(auto* editor=pane.tabs[index]->editor) { if(line) editor->GoTo(line,std::max<size_t>(column,1),focusEditor);else if(focusEditor) editor->MakeFocus(); }
     }
     UpdateTabs();
 }
@@ -286,7 +288,7 @@ void Workspace::ReopenTab() {
             auto* pane=FindPane(paneID);if(!pane) return;
             for(auto& tab:pane->tabs) if(auto* d=ByID(tab->document);d && d->path==closed.path) { tab->preview=false;RestoreView(*tab,closed.state);SaveSettings();return; }
         };
-        OpenFile(closed.path,1,1,true,false,paneID);
+        OpenFile(closed.path,0,0,true,false,paneID);
         if(fPendingOpen.count(closed.path)) fPendingRequests[closed.path].push_back(std::move(restore));else restore();return;
     }
     Notice("No saved tabs to reopen.");

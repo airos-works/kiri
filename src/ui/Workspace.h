@@ -30,7 +30,9 @@ public:
     bool QuitRequested() override;
     void WindowActivated(bool active) override;
     void OpenProject(const std::string& path);
-    void OpenFile(const std::string& path,size_t line=1,size_t column=1,bool activate=true,bool preview=false,int64 pane=0,bool focusEditor=true);
+    // line 0 opens or activates the file where it is; a line (and column,
+    // counted from 1) is an explicit jump.
+    void OpenFile(const std::string& path,size_t line=0,size_t column=0,bool activate=true,bool preview=false,int64 pane=0,bool focusEditor=true);
 private:
     friend struct WorkspaceTestAccess;
     struct ExternalChange { FileStamp diskStamp;int64 revision=0;std::string backupDirectory,error;std::shared_ptr<DiffModel> comparison; };

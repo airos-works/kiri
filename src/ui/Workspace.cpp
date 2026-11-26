@@ -160,7 +160,8 @@ public:
             if(selected<0 && !fRows.empty()) selected=fSearch?1:0;
             if(selected>=0 && selected<int32(fRows.size()) && fRows[selected]>=0) {
                 auto& match=fMatches[fRows[selected]];BMessage request(kOpenFile);request.AddString("path",(fs::path(fRoot)/match.path).c_str());
-                request.AddString("search_project",fRoot.c_str());request.AddInt64("line",match.line);request.AddInt64("column",match.column);
+                // Search results jump to their match; Open Quickly opens the file as it is.
+                request.AddString("search_project",fRoot.c_str());if(fSearch) { request.AddInt64("line",match.line);request.AddInt64("column",match.column); }
                 request.AddBool("preview",message->what==kQueryPreview);fTarget.SendMessage(&request);if(message->what==kQueryResult) PostMessage(B_QUIT_REQUESTED);
             }
         } else BWindow::MessageReceived(message);
@@ -531,8 +532,13 @@ void Workspace::OpenFile(const std::string& input,size_t line,size_t column,bool
             auto* document=d.get();fDocuments.push_back(std::move(d));
             ShowDocument(*pane,*document,line,column,preview,front,focusEditor,true);
             if(activate) RememberRecent(path,false);
+            // The saved session's view state applies once, to the open that
+            // restores it; an explicit location (a search hit) wins over it.
             auto restored=fRestoreDocuments.find(path);
-            if(restored!=fRestoreDocuments.end()) for(auto& tab:pane->tabs) if(tab->document==document->id) RestoreView(*tab,restored->second);
+            if(restored!=fRestoreDocuments.end()) {
+                if(!line) for(auto& tab:pane->tabs) if(tab->document==document->id) RestoreView(*tab,restored->second);
+                fRestoreDocuments.erase(restored);
+            }
             finish();
         };
     },{},[this,path,preview](const std::string& error) {
@@ -742,11 +748,11 @@ void Workspace::FinishRestore() {
         fRestoreFilesStarted=true;
         for(const auto& path:fRestorePaths) {
             bool open=false;for(const auto& document:fDocuments) if(document->path==path) open=true;
-            if(!open && StatFile(path).exists) OpenFile(path,1,1,false);
+            if(!open && StatFile(path).exists) OpenFile(path,0,0,false);
         }
     }
     if(!fPendingOpen.empty()) return;
-    fRestoring=false;
+    fRestoring=false;fRestoreDocuments.clear(); // startup state is for startup only
     if(!fFocusSerial && !fRestoreLayout.IsEmpty()) RestoreLayout();
     else if(!fFocusSerial && !fDocuments.empty()) {
         size_t selected=0;for(size_t i=0;i<fDocuments.size();++i) if(fDocuments[i]->path==fRestoreSelected || fDocuments[i]->recoveryFile==fRestoreSelected) { selected=i;break; }
@@ -926,7 +932,7 @@ void Workspace::MessageReceived(BMessage* message) {
             const char* searchProject=nullptr;if(message->FindString("search_project",&searchProject)==B_OK && fProject!=searchProject) break;
             const char* path;
             if(message->FindString("path",&path)==B_OK) {
-                int64 line=1,column=1;message->FindInt64("line",&line);message->FindInt64("column",&column);bool preview=false;message->FindBool("preview",&preview);
+                int64 line=0,column=0;message->FindInt64("line",&line);message->FindInt64("column",&column);bool preview=false;message->FindBool("preview",&preview);
                 if(preview && !fPreviewTabs) break;
                 OpenFile(path,line,column,true,preview,0,!preview);break;
             }
