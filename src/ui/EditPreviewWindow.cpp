@@ -64,10 +64,10 @@ void EditPreviewWindow::Detail() {
     auto row=fList->CurrentSelection();if(row<0 || size_t(row)>=fRows.size()) return;
     auto [i,j]=fRows[row];auto& file=fPlan.files[i];std::string detail=file.before.path+"\n";
     if(j>=0) {
-        auto& edit=file.edits[j].edit;auto start=edit.start?file.before.text.rfind('\n',edit.start-1):std::string::npos;start=start==std::string::npos?0:start+1;
-        auto end=file.before.text.find('\n',edit.end);if(end==std::string::npos) end=file.before.text.size();
-        detail+="Before:\n"+file.before.text.substr(start,std::min<size_t>(end-start,12000))+"\n\nAfter:\n";
-        auto context=file.before.text.substr(start,end-start);context.replace(edit.start-start,edit.end-edit.start,edit.text);detail+=context.substr(0,12000);
+        // Around the edit, not from the start of its line: a match deep in a
+        // minified line, or late in a CR-only file, is what is reviewed.
+        auto excerpt=ExcerptEdit(file.before.text,file.edits[j].edit,2000);
+        detail+="Before:\n"+excerpt.before+"\n\nAfter:\n"+excerpt.after;
     } else { if(!fRestore) file.Prepare();detail+="Before:\n"+file.before.text.substr(0,12000)+"\n\nAfter:\n"+file.after.substr(0,12000); }
     if(!file.error.empty()) detail+="\n\n"+file.error;
     fDetail->SetText(detail.c_str());

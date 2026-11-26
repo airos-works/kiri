@@ -51,6 +51,28 @@ EditPlan ReplacementPlan(const std::string& root,const ProjectIndex& index,const
     }
     return plan;
 }
+namespace {
+bool Continuation(std::string_view text,size_t at) { return at<text.size() && (static_cast<unsigned char>(text[at])&0xc0)==0x80; }
+std::string Shorten(std::string_view text,size_t limit) {
+    if(text.size()<=limit) return std::string(text);
+    size_t head=limit/2,tail=text.size()-limit/2;
+    while(head>0 && Continuation(text,head)) --head;
+    while(tail<text.size() && Continuation(text,tail)) ++tail;
+    return std::string(text.substr(0,head))+"…"+std::string(text.substr(tail));
+}
+}
+EditExcerpt ExcerptEdit(std::string_view text,const TextEdit& edit,size_t context) {
+    auto start=std::min(edit.start,text.size()),end=std::clamp(edit.end,start,text.size());
+    auto lineStart=start?text.find_last_of("\r\n",start-1):std::string_view::npos;lineStart=lineStart==std::string_view::npos?0:lineStart+1;
+    auto lineEnd=text.find_first_of("\r\n",end);if(lineEnd==std::string_view::npos) lineEnd=text.size();
+    auto left=start-lineStart>context?start-context:lineStart;
+    while(left<start && Continuation(text,left)) ++left;
+    auto right=lineEnd-end>context?end+context:lineEnd;
+    while(right>end && Continuation(text,right)) --right;
+    auto prefix=std::string(left>lineStart?"…":"")+std::string(text.substr(left,start-left));
+    auto suffix=std::string(text.substr(end,right-end))+(right<lineEnd?"…":"");
+    return {prefix+Shorten(text.substr(start,end-start),2*context)+suffix,prefix+Shorten(edit.text,2*context)+suffix};
+}
 std::string PathFromURI(const std::string& uri) {
     std::string encoded;
     if(uri.rfind("file:///",0)==0) encoded=uri.substr(7);

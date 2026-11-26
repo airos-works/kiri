@@ -31,6 +31,13 @@ using SnapshotMap=std::map<std::string,EditSnapshot>; // canonical absolute path
 EditSnapshot DiskSnapshot(const std::string& path,const std::atomic<bool>* cancel=nullptr);
 EditPlan ReplacementPlan(const std::string& root,const ProjectIndex& index,const ProjectSearchOptions& options,
     const std::string& replacement,const SnapshotMap& open,const std::atomic<bool>* cancel=nullptr);
+// Before/after text for reviewing one edit: its line (ended by CR, LF or
+// CRLF), cut to about context bytes on each side of the edit at UTF-8
+// boundaries, so an edit deep in a long minified line stays visible. Omitted
+// text is marked with "…"; very long removed or inserted text is shortened
+// in the middle.
+struct EditExcerpt { std::string before,after; };
+EditExcerpt ExcerptEdit(std::string_view text,const TextEdit& edit,size_t context=2000);
 std::string PathFromURI(const std::string& uri);
 std::string ValidateRenameName(const std::string& name,const std::string& language={});
 // Every URI and range is validated, including operations the client cannot apply.

@@ -43,6 +43,21 @@ static void QuotedSelections() {
     SearchOptions options;options.regex=true;options.matchCase=true;
     for(std::string text:{"a.b(c)","x*+?[y]{2}","$^|\\path","日本.語"}) { options.query=QuoteRegex(text);auto found=TextQuery(options).Find("-"+text+"-"+text);CHECK(found.error.empty());CHECK(found.matches.size()==2);CHECK(found.matches[0].start==1); }
 }
+// The replacement preview shows the selected edit, even deep in a long
+// line or late in a CR-only file (#41).
+static void EditExcerpts() {
+    std::string line=std::string(20000,'x')+"😀old"+std::string(30,'y');auto at=line.find("old");
+    auto excerpt=ExcerptEdit(line,{at,at+3,"new"},100);
+    CHECK(excerpt.before.find("😀old"+std::string(30,'y'))!=std::string::npos);CHECK(excerpt.after.find("😀new"+std::string(30,'y'))!=std::string::npos);
+    CHECK(excerpt.before.rfind("…",0)==0);CHECK(excerpt.before.size()<200);CHECK(IsValidUTF8(excerpt.before) && IsValidUTF8(excerpt.after));
+    excerpt=ExcerptEdit(line,{at,at+3,"new"},103);CHECK(IsValidUTF8(excerpt.before)); // the cut lands inside the emoji
+    std::string cr="first\rsecond old line\rthird";at=cr.find("old");excerpt=ExcerptEdit(cr,{at,at+3,"new"});
+    CHECK(excerpt.before=="second old line");CHECK(excerpt.after=="second new line");
+    std::string crlf="a\r\nb old c\r\nd";at=crlf.find("old");excerpt=ExcerptEdit(crlf,{at,at+3,"N"});CHECK(excerpt.before=="b old c" && excerpt.after=="b N c");
+    excerpt=ExcerptEdit("one\ntwo",{0,0,"start "});CHECK(excerpt.before=="one" && excerpt.after=="start one");
+    std::string tail=std::string(5000,'z')+"END";excerpt=ExcerptEdit(tail,{tail.size()-3,tail.size(),"FIN"},50);CHECK(excerpt.after.size()<60 && excerpt.after.substr(excerpt.after.size()-3)=="FIN");
+    excerpt=ExcerptEdit("a\nb",{0,3,std::string(10000,'q')},100);CHECK(excerpt.after.size()<300 && excerpt.after.find("…")!=std::string::npos);
+}
 static void LineColumns() {
     auto parsed=[](const char* text){auto value=ParseLineColumn(text);return value?std::to_string(value->line)+":"+std::to_string(value->column):std::string("invalid");};
     CHECK(parsed("12")=="12:0");CHECK(parsed(" 3 : 7 ")=="3:7");CHECK(parsed("1:5")=="1:5");
@@ -198,4 +213,4 @@ static void WorkspaceEdits() {
     auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
     CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
-int main() { try { Queries();QuotedSelections();LineColumns();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();QuotedSelections();LineColumns();EditExcerpts();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
