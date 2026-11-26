@@ -133,6 +133,7 @@ private:
     void ShowPreferences();
     void ShowDocumentSettings();
     void RefreshDocumentConfig(Document& document,bool force=false);
+    void RefreshDocumentConfigs();
     void ApplyDocumentSettings(BMessage& message);
     void UpdateDocumentStyle(Document& document);
     void ShowFind(bool hide=false);
@@ -275,6 +276,7 @@ private:
     std::map<std::string,std::vector<std::function<void()>>> fPendingRequests;
     std::set<std::string> fPendingOpen;
     int fResolvingOpens=0; // opens whose path and size are being read on a worker
+    bool fConfigBatchPending=false; // a pulse's EditorConfig check is running
     std::shared_ptr<ProjectIndex> fIndex=std::make_shared<ProjectIndex>();
     std::shared_ptr<ProjectIndexSlot> fIndexSlot=std::make_shared<ProjectIndexSlot>();
     std::string fProject,fGitRoot,fSettings;

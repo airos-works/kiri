@@ -868,7 +868,7 @@ void Workspace::ClearRecovery(Document& d) {
 }
 void Workspace::Pulse() {
     StartRecovery();CheckExternalFiles();PollProject();
-    for(auto& d:fDocuments) RefreshDocumentConfig(*d);
+    RefreshDocumentConfigs();
 }
 void Workspace::MessageReceived(BMessage* message) {
     if(message->what==B_NODE_MONITOR) {
