@@ -81,6 +81,18 @@ static void ProjectQueries() {
     ProjectIndex parent;parent.paths={"a.ts"};CHECK(SearchProject(temp.path+"/tests",parent,plain).matches.size()==1);
     index.paths.push_back("src/unavailable");options.include="";result=SearchProject(temp.path,index,options);CHECK(result.unreadable==1);
 }
+// Checking each path Git lists publishes searchable partial snapshots (#30).
+static void GitIndexProgress() {
+    Temp temp;ProcessOptions process;process.directory=temp.path;CHECK(RunProcess({"git","init","-q"},process).ok());
+    for(int i=0;i<1000;++i) Write(temp.path+"/file"+std::to_string(i)+".txt","x");
+    std::vector<ProjectIndex> snapshots;
+    auto index=IndexProject(temp.path,nullptr,500000,false,[&](const ProjectIndex& partial){snapshots.push_back(partial);},std::chrono::milliseconds(0));
+    CHECK(!snapshots.empty());CHECK(snapshots.front().partial);CHECK(!snapshots.front().paths.empty());CHECK(snapshots.front().paths.size()<1000);
+    CHECK(!QuickOpen(snapshots.front(),"file").empty());
+    CHECK(!index.partial);CHECK(index.paths.size()==1000);CHECK(std::is_sorted(index.paths.begin(),index.paths.end()));
+    // The default first report waits, so a quick index sends none.
+    snapshots.clear();IndexProject(temp.path,nullptr,500000,false,[&](const ProjectIndex& partial){snapshots.push_back(partial);});CHECK(snapshots.empty());
+}
 // A failed Git listing must not silently include ignored files (#29).
 static void GitListingFailure() {
     Temp temp;ProcessOptions process;process.directory=temp.path;CHECK(RunProcess({"git","init","-q"},process).ok());
@@ -144,4 +156,4 @@ static void WorkspaceEdits() {
     auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
     CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
-int main() { try { Queries();PathFilters();ProjectQueries();GitListingFailure();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }

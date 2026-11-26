@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -21,10 +22,12 @@ DirectoryResult ListDirectory(const std::string& path, const std::atomic<bool>* 
 // failed in a repository and paths came from a walk without ignore rules).
 struct ProjectIndex { std::vector<std::string> paths; bool truncated=false, partial=false; std::string error; };
 using IndexProgress=std::function<void(const ProjectIndex&)>;
-// progress receives snapshots while a slow directory walk runs (after about
-// half a second, then every two seconds); fast walks finish without one.
+// progress receives snapshots while a slow index runs: a directory walk, or
+// checking each path Git listed (one metadata read per path, slow on network
+// volumes). The first comes after firstReport, then every two seconds; fast
+// indexes finish without one.
 ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* cancel=nullptr, size_t limit=500000,bool includeIgnored=false,
-    const IndexProgress& progress={});
+    const IndexProgress& progress={},std::chrono::milliseconds firstReport=std::chrono::milliseconds(500));
 // The latest index of a workspace, shared with its quick-open windows so they
 // reuse it instead of walking the project again.
 class ProjectIndexSlot {

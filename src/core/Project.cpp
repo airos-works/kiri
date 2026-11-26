@@ -49,15 +49,22 @@ DirectoryResult ListDirectory(const std::string& path, const std::atomic<bool>* 
     });
     return result;
 }
-ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* cancel, size_t limit,bool includeIgnored,const IndexProgress& progress) {
+ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* cancel, size_t limit,bool includeIgnored,const IndexProgress& progress,
+    std::chrono::milliseconds firstReport) {
     ProjectIndex result;
     auto cancelled=[&]{return cancel && cancel->load();};
+    using Clock=std::chrono::steady_clock;auto report=Clock::now()+firstReport;
+    auto publish=[&] {
+        if(!progress || cancelled() || Clock::now()<report) return;
+        result.partial=true;progress(result);result.partial=false;
+        report=Clock::now()+std::chrono::seconds(2);
+    };
     ProcessOptions opts;opts.directory=root;opts.cancel=cancel;opts.outputLimit=64*1024*1024;opts.environment={"LC_ALL=C","GIT_OPTIONAL_LOCKS=0"};
     std::vector<std::string> command={"git","ls-files","-z","--cached","--others"};
     if(!includeIgnored) command.push_back("--exclude-standard");
     auto git=RunProcess(command,opts);
     if(git.ok()) {
-        size_t offset=0;
+        size_t offset=0,checked=0;
         while(offset<git.output.size() && !cancelled()) {
             auto end=git.output.find('\0',offset);
             if(end==std::string::npos) break;
@@ -65,6 +72,7 @@ ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* canc
             auto path=git.output.substr(offset,end-offset);offset=end+1;
             std::error_code error;auto status=fs::symlink_status(fs::path(root)/path,error);
             if(!error && (fs::is_regular_file(status) || fs::is_symlink(status))) result.paths.push_back(std::move(path));
+            if((++checked&255)==0) publish(); // checking every path can take minutes on a share
         }
         std::sort(result.paths.begin(),result.paths.end());
         result.paths.erase(std::unique(result.paths.begin(),result.paths.end()),result.paths.end());
@@ -83,7 +91,6 @@ ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* canc
     }
     const std::set<std::string> excluded={".git",".hg",".svn","node_modules",".cache",".vm","__pycache__",".venv","vendor","build","dist","target"};
     std::vector<fs::path> pending{root};
-    using Clock=std::chrono::steady_clock;auto report=Clock::now()+std::chrono::milliseconds(500);
     auto base=root;if(base.empty() || base.back()!='/') base+='/';
     while(!pending.empty() && !cancelled()) {
         auto current=pending.back();pending.pop_back();
@@ -97,10 +104,7 @@ ProjectIndex IndexProject(const std::string& root, const std::atomic<bool>* canc
                 result.paths.push_back(entry.path.compare(0,base.size(),base)==0?entry.path.substr(base.size()):fs::path(entry.path).lexically_relative(root).string());
             }
         }
-        if(progress && !pending.empty() && !cancelled() && Clock::now()>=report) {
-            result.partial=true;progress(result);result.partial=false;
-            report=Clock::now()+std::chrono::seconds(2);
-        }
+        if(!pending.empty()) publish();
     }
     return result;
 }
