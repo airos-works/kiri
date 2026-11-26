@@ -25,11 +25,17 @@ public:
     void ApplyTheme(const Theme& theme);
     bool Exited() const { return fExited.load(); }
 private:
+    friend struct WorkspaceTestAccess;
     void Stop();
     void FlushInput();
     void Tick();
     void Copy();
     void Paste();
+    // A cell boundary (column 0..Columns()) on an absolute content line.
+    struct CellPosition { int64_t line=0;int column=0; };
+    CellPosition PositionAt(BPoint where,bool boundary) const;
+    void UpdateSelection();
+    bool Selected(int64_t line,int column) const;
     TerminalModel fModel;
     PtySession fSession;
     std::unique_ptr<BMessageRunner> fTimer;
@@ -39,7 +45,11 @@ private:
     std::string fIncoming,fOutgoing;
     std::string fDirectory;
     float fCellWidth=8,fCellHeight=18,fAscent=13;
-    int fScrollOffset=0,fSelectionStart=-1,fSelectionEnd=-1;
+    int fScrollOffset=0;
+    // Drag from fAnchor to fCaret; fSelectionStart/End are the normalized
+    // cell range [start,end). Mode 1 selects cells, 2 words, 3 whole rows.
+    CellPosition fAnchor,fCaret,fSelectionStart,fSelectionEnd;
+    int fSelectionMode=0;
     bool fSelecting=false;
     bool fExitReported=false;
     Theme fTheme=Theme::Builtins()[0];

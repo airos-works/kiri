@@ -39,7 +39,7 @@ void TerminalView::Stop() {
 }
 void TerminalView::Start(const std::string& directory) {
     Stop();fDirectory=directory;fStop=false;fExited=false;fExitReported=false;
-    fModel.Reset();fScrollOffset=0;fSelectionStart=fSelectionEnd=-1;ApplyTheme(fTheme);
+    fModel.Reset();fScrollOffset=0;fSelectionMode=0;fSelectionStart=fSelectionEnd={};ApplyTheme(fTheme);
     { std::lock_guard<std::mutex> guard(fMutex);fIncoming.clear();fOutgoing.clear(); }
     auto error=fSession.Start(directory,fModel.Rows(),fModel.Columns());
     if(!error.empty()) {
@@ -109,7 +109,7 @@ void TerminalView::Draw(BRect update) {
             vterm_screen_convert_color_to_rgb(fModel.Screen(),&fg);vterm_screen_convert_color_to_rgb(fModel.Screen(),&bg);
             rgb_color foreground{fg.rgb.red,fg.rgb.green,fg.rgb.blue,255},background{bg.rgb.red,bg.rgb.green,bg.rgb.blue,255};
             if(cell.attrs.reverse) std::swap(foreground,background);
-            if(fSelectionStart>=0 && row>=std::min(fSelectionStart,fSelectionEnd) && row<=std::max(fSelectionStart,fSelectionEnd)) {background=fTheme.selection;foreground=fTheme.selectionText;}
+            if(Selected(fModel.LineAt(row,fScrollOffset),col)) {background=fTheme.selection;foreground=fTheme.selectionText;}
             BRect rect(8+col*fCellWidth,6+row*fCellHeight,8+(col+std::max(1,int(cell.width)))*fCellWidth-1,6+(row+1)*fCellHeight-1);
             if(cell.chars[0]==UINT32_MAX) continue;
             SetHighColor(background);FillRect(rect);SetLowColor(background);SetHighColor(foreground);
@@ -142,7 +142,7 @@ void TerminalView::Draw(BRect update) {
 }
 void TerminalView::KeyDown(const char* bytes,int32 count) {
     if(count<=0) return;
-    fScrollOffset=0;fSelectionStart=fSelectionEnd=-1;
+    fScrollOffset=0;fSelectionMode=0;fSelectionStart=fSelectionEnd={};
     VTermModifier mods=VTERM_MOD_NONE;
     uint32 flags=modifiers();int32 eventModifiers=0;
     if(Window()->CurrentMessage()->FindInt32("modifiers",&eventModifiers)==B_OK) flags=eventModifiers;
@@ -179,13 +179,41 @@ void TerminalView::KeyDown(const char* bytes,int32 count) {
     }
     FlushInput();Invalidate();
 }
+TerminalView::CellPosition TerminalView::PositionAt(BPoint where,bool boundary) const {
+    int row=std::clamp(static_cast<int>(floorf((where.y-6)/fCellHeight)),0,fModel.Rows()-1);
+    float column=(where.x-8)/fCellWidth;
+    int cell=boundary?std::clamp(static_cast<int>(floorf(column+.5f)),0,fModel.Columns()):std::clamp(static_cast<int>(floorf(column)),0,fModel.Columns()-1);
+    return {fModel.LineAt(row,fScrollOffset),cell};
+}
+void TerminalView::UpdateSelection() {
+    auto before=[](const CellPosition& a,const CellPosition& b){return a.line<b.line || (a.line==b.line && a.column<b.column);};
+    auto first=fAnchor,last=fCaret;if(before(last,first)) std::swap(first,last);
+    if(fSelectionMode==3) { first.column=0;last.column=fModel.Columns(); }
+    else if(fSelectionMode==2) {
+        // A word is a run of non-blank cells: a path, a URL or a command.
+        auto blank=[&](const CellPosition& p){auto cell=fModel.LineCell(p.line,p.column);return cell.chars[0]!=UINT32_MAX && (!cell.chars[0] || cell.chars[0]==' ');};
+        if(!blank(first)) while(first.column>0 && !blank({first.line,first.column-1})) --first.column;
+        if(blank(last)) ++last.column;
+        else { while(last.column<fModel.Columns() && !blank(last)) ++last.column; }
+    } else if(fSelectionMode!=1) { fSelectionStart=fSelectionEnd={};return; }
+    fSelectionStart=first;fSelectionEnd=last;
+}
+bool TerminalView::Selected(int64_t line,int column) const {
+    if(!fSelectionMode) return false;
+    auto at=std::make_pair(line,column);
+    return at>=std::make_pair(fSelectionStart.line,fSelectionStart.column) && at<std::make_pair(fSelectionEnd.line,fSelectionEnd.column);
+}
 void TerminalView::MouseDown(BPoint where) {
     MakeFocus();fSelecting=true;
-    fSelectionStart=fSelectionEnd=std::clamp(static_cast<int>((where.y-6)/fCellHeight),0,fModel.Rows()-1);
+    int32 clicks=1;if(auto* message=Window()->CurrentMessage()) message->FindInt32("clicks",&clicks);
+    // Click and drag selects characters; a double click selects a word and a
+    // triple click whole rows, each extended by dragging.
+    fSelectionMode=clicks>=3?3:clicks==2?2:1;
+    fAnchor=fCaret=PositionAt(where,fSelectionMode==1);UpdateSelection();
     SetMouseEventMask(B_POINTER_EVENTS,B_LOCK_WINDOW_FOCUS);Invalidate();
 }
 void TerminalView::MouseMoved(BPoint where,uint32,const BMessage*) {
-    if(fSelecting) { fSelectionEnd=std::clamp(static_cast<int>((where.y-6)/fCellHeight),0,fModel.Rows()-1);Invalidate(); }
+    if(fSelecting) { fCaret=PositionAt(where,fSelectionMode==1);UpdateSelection();Invalidate(); }
 }
 void TerminalView::MouseUp(BPoint) { fSelecting=false; }
 void TerminalView::MakeFocus(bool focus) {
@@ -193,8 +221,8 @@ void TerminalView::MakeFocus(bool focus) {
     if(changed && Window()) Window()->PostMessage(kTerminalFocus);
 }
 void TerminalView::Copy() {
-    if(fSelectionStart<0) return;
-    auto text=fModel.Text(std::min(fSelectionStart,fSelectionEnd),std::max(fSelectionStart,fSelectionEnd),fScrollOffset);
+    if(!fSelectionMode || (fSelectionStart.line==fSelectionEnd.line && fSelectionStart.column==fSelectionEnd.column)) return;
+    auto text=fModel.TextRange(fSelectionStart.line,fSelectionStart.column,fSelectionEnd.line,fSelectionEnd.column);
     if(be_clipboard->Lock()) { be_clipboard->Clear();be_clipboard->Data()->AddData("text/plain",B_MIME_TYPE,text.data(),text.size());be_clipboard->Commit();be_clipboard->Unlock(); }
 }
 void TerminalView::Paste() {

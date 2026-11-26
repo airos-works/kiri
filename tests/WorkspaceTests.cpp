@@ -4,6 +4,8 @@
 #include "ui/Editor.h"
 #include "ui/TabStrip.h"
 #include "ui/TerminalPanel.h"
+#include "ui/TerminalView.h"
+#include <Clipboard.h>
 #include "ui/DiffView.h"
 #include "ui/GitView.h"
 #include "ui/Explorer.h"
@@ -208,6 +210,38 @@ struct WorkspaceTestAccess {
         editor->SendMessage(SCI_UNDO);CHECK(editor->Matches("original\n") && !editor->Dirty());w->SaveSettings();CHECK(w->QuitRequested());w->Quit();
         w=new Workspace(settings,true);w->Show();CHECK(w->Lock());Wait(*w,[&]{return !w->fRestoring;});CHECK(w->fEditorSettings.minimap && w->fEditorSettings.indentation.indentWidth==2 && (w->fEditorSettings.guideColumns==std::vector<int>{72,100}));CHECK(w->Current()->editor->Matches("original\n") && w->Current()->editor->Minimap()->Enabled());w->Quit();
         std::cout<<"Editing Defaults validation, Preferences preview/Cancel/Apply, document state and restart passed.\n";
+    }
+    // Terminal selections copy what was dragged over, not whole rows (#21).
+    static void TerminalSelection() {
+        auto* window=new BWindow(BRect(40,40,640,400),"Terminal selection",B_TITLED_WINDOW,0);auto* view=new TerminalView();
+        BLayoutBuilder::Group<>(window,B_VERTICAL,0).Add(view);window->Show();
+        for(int i=0;i<100;++i) { CHECK(window->Lock());bool laidOut=view->fModel.Columns()>=40;window->Unlock();if(laidOut) break;snooze(20000); }
+        CHECK(window->Lock());CHECK(view->fModel.Columns()>=40);
+        std::string data="error: src/main.cpp:12: bad\r\nnext line here";view->fModel.Feed(data.data(),data.size());
+        auto point=[&](int row,float column){return BPoint(8+column*view->fCellWidth,6+(row+.5f)*view->fCellHeight);};
+        auto post=[&](uint32 what,BPoint where,int32 clicks) {
+            BMessage message(what);message.AddPoint("be:view_where",where);message.AddPoint("where",view->ConvertToScreen(where));message.AddInt32("buttons",what==B_MOUSE_UP?0:B_PRIMARY_MOUSE_BUTTON);
+            message.AddInt32("clicks",clicks);message.AddInt32("be:transit",B_INSIDE_VIEW);message.AddInt32("modifiers",0);message.AddInt64("when",system_time());window->PostMessage(&message,view);
+        };
+        auto drag=[&](BPoint from,BPoint to,int32 clicks) { post(B_MOUSE_DOWN,from,clicks);post(B_MOUSE_MOVED,to,clicks);post(B_MOUSE_UP,to,clicks);window->Unlock();snooze(150000);CHECK(window->Lock()); };
+        auto copied=[&] {
+            BMessage copy(B_COPY);view->MessageReceived(&copy);std::string text;
+            if(be_clipboard->Lock()) { const void* bytes=nullptr;ssize_t size=0;if(be_clipboard->Data()->FindData("text/plain",B_MIME_TYPE,&bytes,&size)==B_OK) text.assign(static_cast<const char*>(bytes),size);be_clipboard->Unlock(); }
+            return text;
+        };
+        auto expect=[&](const std::string& wanted) {
+            auto text=copied();++checks;if(text==wanted) return;
+            throw std::runtime_error("Terminal selection after check "+std::to_string(checks)+": copied '"+text+"', expected '"+wanted+"'; mode "+std::to_string(view->fSelectionMode)
+                +" anchor "+std::to_string(view->fAnchor.line)+":"+std::to_string(view->fAnchor.column)+" caret "+std::to_string(view->fCaret.line)+":"+std::to_string(view->fCaret.column)
+                +" range "+std::to_string(view->fSelectionStart.line)+":"+std::to_string(view->fSelectionStart.column)+"-"+std::to_string(view->fSelectionEnd.line)+":"+std::to_string(view->fSelectionEnd.column)
+                +" cell "+std::to_string(view->fCellWidth)+"x"+std::to_string(view->fCellHeight)+" model '"+view->fModel.Text(0,1)+"'");
+        };
+        drag(point(0,7),point(0,19),1);expect("src/main.cpp");
+        drag(point(1,4),point(0,7),1);expect("src/main.cpp:12: bad\nnext");
+        drag(point(0,10.3f),point(0,10.3f),2);expect("src/main.cpp:12:");
+        drag(point(1,2),point(1,2),3);expect("next line here");
+        window->Quit();
+        std::cout<<"Terminal cell, word and row selection passed.\n";
     }
     static void MinimapBenchmarks() {
         {
@@ -947,6 +981,7 @@ int main(int argc,char** argv) {
     }
     BApplication application("application/x-vnd.Kiri-workspace-unit-tests");
     char folder[]="/tmp/kiri-workspace-XXXXXX";auto* root=mkdtemp(folder);if(!root) return 1;
-    try { if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
+    try { if(argc==2 && std::string(argv[1])=="--terminal-selection") {kiri::WorkspaceTestAccess::TerminalSelection();fs::remove_all(root);std::cout<<"Passed "<<checks<<" terminal and problem checks.\n";return 0;}
+        if(argc==2 && std::string(argv[1])=="--editor-options") {kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();fs::remove_all(root);std::cout<<"Passed "<<checks<<" editor options workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--analysis") {kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" analysis workspace checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--project-panes") {kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" project pane checks.\n";return 0;}if(argc==2 && std::string(argv[1])=="--slow-project") {kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));fs::remove_all(root);std::cout<<"Passed "<<checks<<" slow project checks.\n";return 0;}if(argc==3 && std::string(argv[1])=="--real-analysis") {kiri::WorkspaceTestAccess::RealAnalysis(kiri::CanonicalPath(root),argv[2]);fs::remove_all(root);std::cout<<"Passed "<<checks<<" real analysis checks.\n";return 0;}kiri::WorkspaceTestAccess::EditorOptions(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::EditingDefaults(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::MinimapBenchmarks();kiri::WorkspaceTestAccess::TerminalSelection();kiri::WorkspaceTestAccess::Themes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::AnalysisRendering();kiri::WorkspaceTestAccess::Analysis(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::RefreshAndDiff(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::SearchInput(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::ProjectPanes(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SlowProject(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::Run(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));kiri::WorkspaceTestAccess::DragTabs(kiri::CanonicalPath(root));kiri::WorkspaceTestAccess::SearchAndEdits(kiri::CanonicalPath(root),kiri::CanonicalPath(argv[0]));fs::remove_all(root);std::cout<<"Passed "<<checks<<" workspace checks.\n"; }
     catch(const std::exception& error) { std::cerr<<error.what()<<" (test files: "<<root<<")\n";return 1; }
 }

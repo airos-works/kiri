@@ -32,7 +32,7 @@ TerminalModel::TerminalModel(int rows,int columns,size_t scrollback)
     static const VTermScreenCallbacks callbacks=[] {
         VTermScreenCallbacks c{};c.sb_pushline=PushLine;c.sb_popline=PopLine;
         c.settermprop=Property;c.movecursor=MoveCursor;
-        c.sb_clear=[](void* data) { static_cast<TerminalModel*>(data)->fScrollback.clear();return 1; };
+        c.sb_clear=[](void* data) { auto& self=*static_cast<TerminalModel*>(data);self.fDropped+=self.fScrollback.size();self.fScrollback.clear();return 1; };
         return c;
     }();
     vterm_screen_set_callbacks(fScreen,&callbacks,this);
@@ -43,7 +43,7 @@ TerminalModel::TerminalModel(int rows,int columns,size_t scrollback)
     vterm_screen_reset(fScreen,1);
 }
 TerminalModel::~TerminalModel() { vterm_free(fTerm); }
-void TerminalModel::Reset() { vterm_screen_reset(fScreen,1);fScrollback.clear();fOutput.clear();fAlternate=false;fCursorVisible=true; }
+void TerminalModel::Reset() { vterm_screen_reset(fScreen,1);fScrollback.clear();fDropped=0;fOutput.clear();fAlternate=false;fCursorVisible=true; }
 void TerminalModel::Feed(const char* bytes,size_t size) { vterm_input_write(fTerm,bytes,size);vterm_screen_flush_damage(fScreen); }
 void TerminalModel::Resize(int rows,int columns) {
     fRows=std::max(1,rows);fColumns=std::max(1,columns);
@@ -52,7 +52,7 @@ void TerminalModel::Resize(int rows,int columns) {
 int TerminalModel::PushLine(int cols,const VTermScreenCell* cells,void* data) {
     auto& self=*static_cast<TerminalModel*>(data);
     self.fScrollback.emplace_back(cells,cells+cols);
-    if(self.fScrollback.size()>self.fScrollbackLimit) self.fScrollback.pop_front();
+    if(self.fScrollback.size()>self.fScrollbackLimit) { self.fScrollback.pop_front();++self.fDropped; }
     return 1;
 }
 int TerminalModel::PopLine(int cols,VTermScreenCell* cells,void* data) {
@@ -97,6 +97,42 @@ std::string TerminalModel::Text(int firstRow,int lastRow,int scrollOffset) const
         }
         while(!line.empty() && line.back()==' ') line.pop_back();
         result+=line;if(row!=lastRow) result+='\n';
+    }
+    return result;
+}
+int64_t TerminalModel::LineAt(int row,int scrollOffset) const {
+    int64_t size=fScrollback.size();return fDropped+size-std::min<int64_t>(std::max(scrollOffset,0),size)+row;
+}
+int TerminalModel::RowOf(int64_t line,int scrollOffset) const { return int(line-LineAt(0,scrollOffset)); }
+VTermScreenCell TerminalModel::LineCell(int64_t line,int column) const {
+    // Cell() takes negative rows as scrollback, counted back from the screen.
+    int64_t row=line-fDropped-int64_t(fScrollback.size());
+    if(row<-int64_t(fScrollback.size()) || row>=fRows) return VTermScreenCell{};
+    return Cell(int(row),column,0);
+}
+std::string TerminalModel::TextRange(int64_t firstLine,int firstColumn,int64_t lastLine,int lastColumn) const {
+    if(std::make_pair(lastLine,lastColumn)<std::make_pair(firstLine,firstColumn)) { std::swap(firstLine,lastLine);std::swap(firstColumn,lastColumn); }
+    firstColumn=std::clamp(firstColumn,0,fColumns);lastColumn=std::clamp(lastColumn,0,fColumns);
+    // Only lines that still exist: older ones left the scrollback.
+    auto oldest=fDropped,newest=fDropped+int64_t(fScrollback.size())+fRows-1;
+    if(firstLine<oldest) { firstLine=oldest;firstColumn=0; }
+    if(lastLine>newest) { lastLine=newest;lastColumn=fColumns; }
+    std::string result;
+    if(firstLine>lastLine) return result;
+    for(auto line=firstLine;line<=lastLine;++line) {
+        int begin=line==firstLine?firstColumn:0,end=line==lastLine?lastColumn:fColumns;
+        // Never split a double-width glyph: start at its first cell, end after its second.
+        while(begin>0 && begin<fColumns && LineCell(line,begin).chars[0]==UINT32_MAX) --begin;
+        while(end>0 && end<fColumns && LineCell(line,end).chars[0]==UINT32_MAX) ++end;
+        std::string text;
+        for(int column=begin;column<end;++column) {
+            auto cell=LineCell(line,column);
+            if(cell.chars[0]==UINT32_MAX) continue;
+            if(!cell.chars[0]) text+=' ';
+            for(uint32_t c:cell.chars) { if(!c) break;if(c!=UINT32_MAX) text+=UTF8(c); }
+        }
+        if(end==fColumns) while(!text.empty() && text.back()==' ') text.pop_back();
+        result+=text;if(line!=lastLine) result+='\n';
     }
     return result;
 }

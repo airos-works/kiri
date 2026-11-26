@@ -241,6 +241,23 @@ void Terminal() {
     }
     CHECK(!session.Running());session.Stop();CHECK(!session.Running());
 }
+// Copying part of a row: a file name in compiler output, across two rows,
+// reversed, through wide glyphs and combining marks, and in scrollback (#21).
+void TerminalSelection() {
+    TerminalModel model(3,30,4);std::string data="error: src/main.cpp:12: bad\r\nnext line here";model.Feed(data.data(),data.size());
+    auto top=model.LineAt(0);CHECK(model.TextRange(top,7,top,19)=="src/main.cpp");CHECK(model.TextRange(top,19,top,7)=="src/main.cpp");
+    CHECK(model.TextRange(top,7,top+1,4)=="src/main.cpp:12: bad\nnext");CHECK(model.TextRange(top+1,4,top,7)=="src/main.cpp:12: bad\nnext");
+    CHECK(model.TextRange(top,0,top,30)=="error: src/main.cpp:12: bad");CHECK(model.TextRange(top,3,top,3).empty());
+    data="\r\n日本語 e\xcc\x81x";model.Feed(data.data(),data.size());auto wide=model.LineAt(2);
+    CHECK(model.TextRange(wide,1,wide,3)=="日本");CHECK(model.TextRange(wide,0,wide,2)=="日");CHECK(model.TextRange(wide,7,wide,8)=="e\xcc\x81");
+    // Output scrolls lines into the scrollback; their numbers stay the same.
+    for(int i=0;i<3;++i) { data="\r\nmore "+std::to_string(i);model.Feed(data.data(),data.size()); }
+    CHECK(model.ScrollbackSize()>0);CHECK(model.TextRange(top,7,top,19)=="src/main.cpp");CHECK(model.RowOf(top)<0);
+    CHECK(model.RowOf(top,int(model.ScrollbackSize()))==0);CHECK(model.LineAt(0,int(model.ScrollbackSize()))==top);
+    // Lines beyond the scrollback limit are gone, not renumbered.
+    for(int i=0;i<10;++i) { data="\r\nflood "+std::to_string(i);model.Feed(data.data(),data.size()); }
+    CHECK(model.TextRange(top,7,top,19).empty());auto last=model.LineAt(2);CHECK(model.TextRange(last,0,last,30)=="flood 9");
+}
 void TerminalIsolation() {
     Temporary firstDirectory,secondDirectory;PtySession first,second;
     CHECK(first.Start(firstDirectory.path,24,80).empty());
@@ -264,7 +281,7 @@ void TerminalIsolation() {
 }
 int main() {
     signal(SIGPIPE,SIG_IGN);
-    try { Processes();Files();InPlaceSaveFailures();SpecialFiles();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalIsolation();Recovery(); }
+    try { Processes();Files();InPlaceSaveFailures();SpecialFiles();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalSelection();TerminalIsolation();Recovery(); }
     catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
     std::cout<<"Passed "<<checks<<" checks: processes, safe saves, Git, project search and real PTY terminal.\n";
 }

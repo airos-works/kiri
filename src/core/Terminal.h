@@ -20,6 +20,16 @@ public:
     void Resize(int rows,int columns);
     VTermScreenCell Cell(int row,int column,int scrollOffset=0) const;
     std::string Text(int firstRow,int lastRow,int scrollOffset=0) const;
+    // Content lines are numbered from the first line that ever entered the
+    // scrollback, so a selection stays on its text while output scrolls.
+    int64_t LineAt(int row,int scrollOffset=0) const;
+    int RowOf(int64_t line,int scrollOffset=0) const;
+    VTermScreenCell LineCell(int64_t line,int column) const;
+    // Text between two cell boundaries (line, column 0..Columns()), in either
+    // order. A double-width glyph is never split, combining characters stay
+    // with their base, and trailing blanks are dropped where a row is taken
+    // to its end. Rows are joined with newlines.
+    std::string TextRange(int64_t firstLine,int firstColumn,int64_t lastLine,int lastColumn) const;
     std::string TakeOutput();
     void Key(VTermKey key,VTermModifier modifiers=VTERM_MOD_NONE);
     void Character(uint32_t codepoint,VTermModifier modifiers=VTERM_MOD_NONE);
@@ -44,6 +54,7 @@ private:
     int fRows,fColumns;
     size_t fScrollbackLimit;
     std::deque<std::vector<VTermScreenCell>> fScrollback;
+    int64_t fDropped=0; // lines that left the scrollback
     std::string fOutput;
     uint32_t fForeground=0xf0f0f0,fBackground=0;
     bool fCursorVisible=true,fAlternate=false;
