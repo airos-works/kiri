@@ -16,7 +16,7 @@ crash recovery, image previews and a 200 MiB document. See the
 <!-- airos-ci:latest-builds:start -->
 ## Latest builds
 
-Built automatically by air/OS CI from commit `ab5d74e` on 2026-11-26 ([all files](https://github.com/airos-works/kiri/releases/tag/latest)).
+Built automatically by air/OS CI from commit `912af59` on 2026-11-26 ([all files](https://github.com/airos-works/kiri/releases/tag/latest)).
 
 | Architecture | Package |
 |---|---|
