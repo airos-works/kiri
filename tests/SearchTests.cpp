@@ -85,6 +85,9 @@ static void WorkspaceEdits() {
     Temp temp;auto path=temp.path+"/日本語 #%.ts";Write(path,"😀 old\n");auto snapshot=DiskSnapshot(path);snapshot.open=true;snapshot.version=3;
     CHECK(PathFromURI(FileURI(path))==path);CHECK(Throws([]{PathFromURI("https://example.com/a.ts");}));CHECK(Throws([]{PathFromURI("file:///tmp/%00x");}));
     CHECK(!ValidateRenameName("class","typescript").empty());CHECK(!ValidateRenameName("namespace","cpp").empty());
+    for(auto keyword:{"int","return","struct","while","static_assert"}) { CHECK(!ValidateRenameName(keyword,"c").empty());CHECK(!ValidateRenameName(keyword,"cpp").empty()); }
+    CHECK(!ValidateRenameName("_Bool","c").empty());CHECK(!ValidateRenameName("restrict","c").empty());
+    CHECK(ValidateRenameName("Int","c").empty());CHECK(ValidateRenameName("Int","cpp").empty());CHECK(ValidateRenameName("class","c").empty());CHECK(ValidateRenameName("_bool","c").empty());
     CHECK(ValidateRenameName("newName").empty());CHECK(ValidateRenameName("日本語").empty());CHECK(!ValidateRenameName("x y").empty());CHECK(!ValidateRenameName("1x").empty());
     Json change={{"textDocument",{{"uri",FileURI(path)},{"version",3}}},{"edits",Json::array({{{"range",Range(0,3,6)},{"newText","fresh"}}})}};
     Json edit={{"documentChanges",Json::array({change})}};

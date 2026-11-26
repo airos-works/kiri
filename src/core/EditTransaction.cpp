@@ -67,9 +67,18 @@ std::string ValidateRenameName(const std::string& name,const std::string& langua
     const std::set<std::string> common={"break","case","catch","class","const","continue","default","delete","do","else","enum","export","false","for","if","import","new","return","switch","this","throw","true","try","void","while"};
     const std::set<std::string> js={"await","debugger","extends","finally","function","implements","in","instanceof","interface","let","null","package","private","protected","public","static","super","typeof","var","with","yield"};
     const std::set<std::string> cpp={"alignas","alignof","and","and_eq","asm","auto","bitand","bitor","bool","char","char8_t","char16_t","char32_t","compl","concept","consteval","constexpr","constinit","const_cast","co_await","co_return","co_yield","decltype","double","dynamic_cast","explicit","extern","float","friend","goto","inline","int","long","mutable","namespace","noexcept","not","not_eq","nullptr","operator","or","or_eq","private","protected","public","register","reinterpret_cast","requires","short","signed","sizeof","static","static_assert","static_cast","struct","template","thread_local","typedef","typeid","typename","union","unsigned","using","virtual","volatile","wchar_t","xor","xor_eq"};
+    // C keywords through C23, including the reserved _Upper spellings. C has
+    // no class, new, this or try, so it does not share the common list.
+    const std::set<std::string> c={"alignas","alignof","auto","bool","break","case","char","const","constexpr","continue","default","do","double","else","enum",
+        "extern","false","float","for","goto","if","inline","int","long","nullptr","register","restrict","return","short","signed","sizeof","static",
+        "static_assert","struct","switch","thread_local","true","typedef","typeof","typeof_unqual","union","unsigned","void","volatile","while",
+        "_Alignas","_Alignof","_Atomic","_BitInt","_Bool","_Complex","_Decimal128","_Decimal32","_Decimal64","_Generic","_Imaginary","_Noreturn",
+        "_Static_assert","_Thread_local"};
     bool javascript=language.rfind("javascript",0)==0 || language.rfind("typescript",0)==0;
-    bool cfamily=language=="cpp";
-    if((javascript || cfamily) && (common.count(name) || (javascript?js.count(name):cpp.count(name)))) return "Choose a name that is not a reserved language keyword.";
+    bool cplusplus=language=="cpp";
+    const char* reserved="Choose a name that is not a reserved language keyword.";
+    if(language=="c") return c.count(name)?reserved:std::string();
+    if((javascript || cplusplus) && (common.count(name) || (javascript?js.count(name):cpp.count(name)))) return reserved;
 
     return {};
 }
