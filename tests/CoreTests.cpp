@@ -3,6 +3,7 @@
 #include "core/Project.h"
 #include "core/Terminal.h"
 #include "core/Recovery.h"
+#include "core/EditTransaction.h"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -72,6 +73,27 @@ void Files() {
     Put(path,std::string("a\0b",3));CHECK(ReadFile(path.string()).binary);
     int sparse=open(path.c_str(),O_WRONLY);CHECK(sparse>=0);CHECK(ftruncate(sparse,2LL*1024*1024*1024)==0);close(sparse);
     auto binary=ReadFile(path.string());CHECK(binary.ok());CHECK(binary.binary);CHECK(binary.stamp.size==2ULL*1024*1024*1024);CHECK(binary.bytes.size()==65536);
+}
+// A refused rename falls back to writing in place; if that fails, the
+// complete temporary copy is kept and named (#16).
+void InPlaceSaveFailures() {
+    Temporary t;auto path=(fs::path(t.path)/"shared.txt").string();Put(path,"original\n");auto& faults=SaveFaultInjection();
+    auto temporaries=[&]{std::vector<std::string> names;for(auto& entry:fs::directory_iterator(t.path)) if(entry.path().filename().string().find(".kiri-save-")!=std::string::npos) names.push_back(entry.path().string());return names;};
+    faults.renameErrno=EBUSY;CHECK(SaveFile(path,"in place\n",StatFile(path)).empty());CHECK(ReadFile(path).bytes=="in place\n");CHECK(temporaries().empty());
+    for(int fault:{1,2}) {
+        Put(path,"original\n");(fault==1?faults.writeErrno:faults.flushErrno)=EIO;
+        auto error=SaveFile(path,"complete edit\n",StatFile(path));CHECK(!error.empty());
+        auto kept=temporaries();CHECK(kept.size()==1);CHECK(error.find(kept[0])!=std::string::npos);CHECK(error.find("editor")==std::string::npos);
+        CHECK(ReadFile(kept[0]).bytes=="complete edit\n");fs::remove(kept[0]);faults.writeErrno=faults.flushErrno=0;
+    }
+    // Background project replacement of a closed file reports the same copy.
+    Put(path,"old text\n");FileEdit edit;edit.before=DiskSnapshot(path);edit.edits.push_back({{0,3,"new"},true});edit.Prepare();faults.writeErrno=EIO;
+    auto error=ApplyDiskEdit(edit);CHECK(!error.empty());auto kept=temporaries();CHECK(kept.size()==1);CHECK(error.find(kept[0])!=std::string::npos);
+    CHECK(ReadFile(kept[0]).bytes=="new text\n");CHECK(!edit.applied);fs::remove(kept[0]);faults.writeErrno=0;
+    // The opened file is checked before truncation: a replaced file is left alone.
+    Put(path,"mine\n");faults.beforeOverwrite=[](const std::string& target){Put(target+".other","theirs, newer\n");fs::rename(target+".other",target);};
+    error=SaveFile(path,"edit\n",StatFile(path));CHECK(!error.empty());CHECK(ReadFile(path).bytes=="theirs, newer\n");CHECK(temporaries().empty());
+    faults=SaveFaults{};
 }
 // Named pipes are skipped by the index and never block a reader (#39).
 void SpecialFiles() {
@@ -226,7 +248,7 @@ void TerminalIsolation() {
 }
 int main() {
     signal(SIGPIPE,SIG_IGN);
-    try { Processes();Files();SpecialFiles();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalIsolation();Recovery(); }
+    try { Processes();Files();InPlaceSaveFailures();SpecialFiles();LinksAndGraph();GitIntegration();QuickOpenCase();Terminal();TerminalIsolation();Recovery(); }
     catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
     std::cout<<"Passed "<<checks<<" checks: processes, safe saves, Git, project search and real PTY terminal.\n";
 }

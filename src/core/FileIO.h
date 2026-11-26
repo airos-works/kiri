@@ -38,4 +38,11 @@ FileData ReadFile(const std::string& path, const std::atomic<bool>* cancel=nullp
 std::string SaveFile(const std::string& path, std::string_view bytes, const FileStamp& expected);
 std::string SaveFileParts(const std::string& path,const std::vector<std::string_view>& parts,const FileStamp& expected);
 std::string HexPreview(std::string_view bytes, uint64_t totalSize);
+// Test hooks for SaveFileParts' fallback when replacing by rename is refused
+// (an SMB share with the file open elsewhere). Zero means no fault.
+struct SaveFaults {
+    int renameErrno=0,writeErrno=0,flushErrno=0;
+    std::function<void(const std::string&)> beforeOverwrite;
+};
+SaveFaults& SaveFaultInjection();
 }

@@ -166,17 +166,32 @@ std::string WriteParts(int fd,const std::vector<std::string_view>& parts) {
     }
     return {};
 }
-std::string OverwriteInPlace(const std::string& path,const std::vector<std::string_view>& parts,const FileStamp& expected) {
+// Returns an error and sets damaged when the destination was truncated but
+// not completely rewritten; the caller then keeps its complete copy.
+std::string OverwriteInPlace(const std::string& path,const std::vector<std::string_view>& parts,const FileStamp& expected,bool& damaged) {
+    damaged=false;
     if (!expected.exists) return "Cannot replace file: it is in use.";
-    int fd=open(path.c_str(),O_WRONLY|O_TRUNC|O_CLOEXEC);
+    auto& faults=SaveFaultInjection();if(faults.beforeOverwrite) faults.beforeOverwrite(path);
+    // Truncate only after the opened file proves to be the one we read:
+    // O_TRUNC would empty a file somebody else just put at this path.
+    int fd=open(path.c_str(),O_WRONLY|O_CLOEXEC|O_NONBLOCK|O_NOCTTY);
     if (fd<0) return Error("Cannot replace file");
-    std::string error=WriteParts(fd,parts);
-    if (error.empty() && fsync(fd)!=0) error=Error("Cannot flush file");
+    struct stat opened{};
+    if (fstat(fd,&opened)!=0 || !S_ISREG(opened.st_mode) || Stamp(opened)!=expected) { close(fd);return "The file changed during save. It was not modified."; }
+    int mode=fcntl(fd,F_GETFL);if(mode!=-1) fcntl(fd,F_SETFL,mode&~O_NONBLOCK);
+    if (ftruncate(fd,0)!=0) { auto error=Error("Cannot replace file");close(fd);return error; }
+    damaged=true;
+    std::string error;
+    if (faults.writeErrno) { errno=faults.writeErrno;error=Error("Cannot write file"); }
+    else error=WriteParts(fd,parts);
+    if (error.empty() && faults.flushErrno) { errno=faults.flushErrno;error=Error("Cannot flush file"); }
+    else if (error.empty() && fsync(fd)!=0) error=Error("Cannot flush file");
     if (close(fd)!=0 && error.empty()) error=Error("Cannot close file");
-    if (!error.empty()) error+=". The file may be incomplete: your edits are still in the editor.";
+    if (error.empty()) damaged=false;
     return error;
 }
 }
+SaveFaults& SaveFaultInjection() { static SaveFaults faults;return faults; }
 std::string SaveFile(const std::string& inputPath, std::string_view bytes, const FileStamp& expected) {
     return SaveFileParts(inputPath,{bytes},expected);
 }
@@ -205,15 +220,24 @@ std::string SaveFileParts(const std::string& inputPath,const std::vector<std::st
     if (error.empty()) error=WriteParts(fd,parts);
     if (error.empty() && fsync(fd)!=0) error=Error("Cannot flush file");
     if (close(fd)!=0 && error.empty()) error=Error("Cannot close file");
-    if (error.empty() && StatFile(path)!=expected) error="The file changed during save. Your edits are still in the editor.";
+    if (error.empty() && StatFile(path)!=expected) error="The file changed during save. It was not modified.";
     // An SMB server does not replace a file that is open, ours included.
     if (old>=0) { close(old);old=-1; }
-    if (error.empty() && rename(name.c_str(),path.c_str())!=0) {
+    int renamed=0;
+    if (error.empty()) {
+        if (int injected=SaveFaultInjection().renameErrno) { errno=injected;renamed=-1; }
+        else renamed=rename(name.c_str(),path.c_str());
+    }
+    if (error.empty() && renamed!=0) {
         // Somebody else has it open (Tracker reading its icon, a viewer).
         // Writing over it in place is what other editors do, and still saves.
-        if (errno==EACCES || errno==EPERM || errno==EBUSY) error=OverwriteInPlace(path,parts,expected);
+        bool damaged=false;
+        if (errno==EACCES || errno==EPERM || errno==EBUSY) error=OverwriteInPlace(path,parts,expected,damaged);
         else error=Error("Cannot replace file");
-        unlink(name.c_str());
+        // The temporary file is complete and flushed: when the original may
+        // now be incomplete, it is the recoverable copy, so keep and name it.
+        if (damaged) error+=". The file may be incomplete. A complete copy was kept at "+name;
+        else unlink(name.c_str());
     } else if (!error.empty()) unlink(name.c_str());
     if (error.empty()) {
         auto parent=std::filesystem::path(path).parent_path().string();
