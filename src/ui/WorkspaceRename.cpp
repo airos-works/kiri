@@ -111,7 +111,12 @@ void Workspace::SubmitRename(const BMessage& message) {
     auto* d=ByID(fRenameDocument);if(!d || !d->editor || !d->editor->Matches(fRenameText)) { fail("The source changed. Run Rename Symbol again.");return; }
     error=ValidateRenameName(name,d->serverLanguage);if(!error.empty()) { fail(error);return; }
     auto found=fServers.find(d->serverKey);if(found==fServers.end() || !found->second.client || !found->second.client->Ready()) { fail("The language server stopped. Run Rename Symbol again.");return; }
+    // Editable buffers must not have changed since the server synchronized
+    // them. A read-only view (a binary preview, maybe in another window) is
+    // no rename source: it matters only if the server targets it, and the
+    // edit plan refuses that case.
     for(const auto& [path,before]:fRenameOpen) {
+        if(before.readOnly) continue;
         try { FileEdit file;file.before=before;error=ValidateEdit(file,CurrentSnapshot(before)); }catch(const std::exception& e) { error=e.what(); }
         if(!error.empty()) { fail(path+": "+error+". Run Rename Symbol again.");return; }
     }

@@ -962,9 +962,13 @@ struct WorkspaceTestAccess {
         // Real Workspace -> LSP -> native prompt -> edit preview -> whole-operation Undo.
         w->fLanguageTools.ForFile(a);for(auto& profile:w->fLanguageTools.profiles) if(profile.language=="typescript") profile.command="'"+executable+"' --language-fixture";
         w->ResetLanguages();auto* server=w->EnsureLanguage(*w->Current());CHECK(server);Wait(*w,[&]{return server->Ready();});w->SyncLanguage(*w->Current(),*server);
+        // An unrelated read-only preview, even in another window, does not block Rename Symbol (#14).
+        auto binaryPath=base+"/unrelated.bin";{std::ofstream(binaryPath,std::ios::binary)<<std::string("\0\1\2",3);}
+        auto* viewer=new Workspace(base+"/viewer-settings",false);viewer->Show();CHECK(viewer->Lock());Open(*viewer,binaryPath);CHECK(viewer->Current()->editor->SendMessage(SCI_GETREADONLY));viewer->Unlock();
         editor->SendMessage(SCI_GOTOPOS,6);w->RenameSymbol(editor);Wait(*w,[&]{return w->fRenameWindow.IsValid();});
         auto beforePlan=w->fEditPlan;BMessage rename(kRenameSubmit);rename.AddInt64("serial",w->fRenameSerial);rename.AddString("name","renamed");w->SubmitRename(rename);
         Wait(*w,[&]{return w->fEditPlan!=beforePlan;});CHECK(w->fEditPlan->rename);CHECK(w->fEditPlan->files.size()==2);
+        w->Unlock();CHECK(viewer->Lock());viewer->Quit();CHECK(w->Lock());
         w->ApplyProjectEdit();Wait(*w,[&]{return !w->fApplyingEdit;});CHECK(editor->Text().find("const renamed")!=std::string::npos);CHECK(ReadFile(b).bytes=="renamed; renamed;\r\n");
         editor->MakeFocus();Send(*w,B_UNDO);Wait(*w,[&]{return !w->fApplyingEdit;});CHECK(editor->Text()==original);CHECK(ReadFile(b).bytes=="old; old;\r\n");
         auto* other=new Workspace(base+"/other-edit-settings",false);other->Show();CHECK(other->Lock());Open(*other,b);
