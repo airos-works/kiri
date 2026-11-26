@@ -54,7 +54,14 @@ public:
     std::string Start(const std::string& directory,int rows,int columns);
     void Resize(int rows,int columns);
     ssize_t Read(char* buffer,size_t size,int timeoutMs=50);
+    // Writes all of buffer, waiting up to 100 ms whenever the PTY is full;
+    // false when it stalls that long or the PTY is gone.
     bool Write(const char* buffer,size_t size);
+    // Writes as much of pending as the PTY accepts within timeoutMs and erases
+    // exactly those bytes, so a full PTY (a program pausing its reads during
+    // a large paste) loses nothing: the rest is sent on a later call. False
+    // only when the PTY is gone; pending then still holds the unsent bytes.
+    bool Flush(std::string& pending,int timeoutMs);
     void Stop();
     bool Running();
     pid_t Process() const { return fPid; }

@@ -219,6 +219,22 @@ void Terminal() {
     }
     CHECK(output.find("KIRI_PTY_OK")!=std::string::npos);CHECK(session.Running());
     CHECK(output.find("KIRI_READY>")!=std::string::npos);
+    // A large bracketed paste to a program that is not reading yet arrives
+    // complete and in order: unsent bytes are kept, not dropped (#15).
+    auto received=t.path+"/received";
+    command="stty raw -echo; printf 'KIRI_%s\\n' RAW; sleep 1; head -c 300000 > '"+received+"'; stty sane; printf 'KIRI_%s\\n' DONE\n";
+    CHECK(session.Write(command.data(),command.size()));output.clear();start=std::chrono::steady_clock::now();
+    while(output.find("KIRI_RAW")==std::string::npos && std::chrono::steady_clock::now()-start<std::chrono::seconds(5)) { auto n=session.Read(buffer,sizeof(buffer));if(n>0) output.append(buffer,n); }
+    CHECK(output.find("KIRI_RAW")!=std::string::npos);
+    std::string paste="\x1b[200~";for(int i=0;paste.size()<300000-6;++i) paste+=char('a'+i%26);paste+="\x1b[201~";CHECK(paste.size()==300000);
+    std::string pending=paste;size_t partial=0;start=std::chrono::steady_clock::now();
+    while(!pending.empty() && std::chrono::steady_clock::now()-start<std::chrono::seconds(20)) {
+        CHECK(session.Flush(pending,10));if(!pending.empty()) ++partial; // the PTY was full: the rest waits
+        auto n=session.Read(buffer,sizeof(buffer),5);if(n>0) output.append(buffer,n);
+    }
+    CHECK(pending.empty());CHECK(partial>0);
+    while(output.find("KIRI_DONE")==std::string::npos && std::chrono::steady_clock::now()-start<std::chrono::seconds(20)) { auto n=session.Read(buffer,sizeof(buffer));if(n>0) output.append(buffer,n); }
+    CHECK(output.find("KIRI_DONE")!=std::string::npos);CHECK(ReadFile(received).bytes==paste);
     CHECK(session.Write("\x04",1));start=std::chrono::steady_clock::now();
     while(session.Running() && std::chrono::steady_clock::now()-start<std::chrono::seconds(3)) {
         session.Read(buffer,sizeof(buffer));

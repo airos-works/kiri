@@ -1,3 +1,4 @@
+#include <chrono>
 #include "core/Terminal.h"
 #include "core/Process.h"
 #include <algorithm>
@@ -212,17 +213,34 @@ ssize_t PtySession::Read(char* buffer,size_t size,int timeoutMs) {
     return n==0?-1:n;
 }
 bool PtySession::Write(const char* buffer,size_t size) {
-    if(fMaster<0) return false;
-    size_t offset=0;
-    while(offset<size) {
-        ssize_t n=write(fMaster,buffer+offset,size-offset);
-        if(n>0) offset+=n;
-        else if(n<0 && errno==EINTR) continue;
-        else if(n<0 && errno==EAGAIN) {
-            pollfd descriptor{fMaster,POLLOUT,0};if(poll(&descriptor,1,100)<=0) return false;
-        } else return false;
+    std::string pending(buffer,size);
+    while(!pending.empty()) {
+        auto before=pending.size();
+        if(!Flush(pending,100) || pending.size()==before) return false;
     }
     return true;
+}
+bool PtySession::Flush(std::string& pending,int timeoutMs) {
+    if(fMaster<0) return false;
+    auto until=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeoutMs);
+    size_t written=0;bool alive=true;
+    while(written<pending.size()) {
+        ssize_t n=write(fMaster,pending.data()+written,pending.size()-written);
+        if(n>0) { written+=size_t(n);continue; }
+        if(n<0 && errno==EINTR) continue;
+        if(n<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) {
+            auto left=std::chrono::duration_cast<std::chrono::milliseconds>(until-std::chrono::steady_clock::now()).count();
+            if(left<=0) break;
+            pollfd descriptor{fMaster,POLLOUT,0};int ready=poll(&descriptor,1,int(left));
+            if(ready<0 && errno==EINTR) continue;
+            if(ready==0) break;
+            if(ready<0 || (descriptor.revents&(POLLERR|POLLNVAL))) { alive=false;break; }
+            continue;
+        }
+        alive=false;break; // EIO and friends: the other side has gone
+    }
+    pending.erase(0,written);
+    return alive;
 }
 bool PtySession::Running() {
     if(fPid<0) return false;

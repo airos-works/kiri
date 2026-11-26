@@ -47,14 +47,24 @@ void TerminalView::Start(const std::string& directory) {
     }
     fWorker=std::thread([this] {
         char buffer[32768];
+        // Bytes taken from fOutgoing that the PTY has not accepted yet: a
+        // program may pause reading mid-paste. They are sent first, from the
+        // exact offset, before anything newer.
+        std::string pending;
         while(!fStop) {
-            std::string outbound;size_t buffered;
+            size_t buffered;
             {
                 std::lock_guard<std::mutex> guard(fMutex);
                 buffered=fIncoming.size();
-                outbound=fOutgoing.substr(0,65536);fOutgoing.erase(0,outbound.size());
+                if(pending.size()<65536 && !fOutgoing.empty()) {
+                    auto take=std::min(fOutgoing.size(),65536-pending.size());pending.append(fOutgoing,0,take);fOutgoing.erase(0,take);
+                }
             }
-            if(!outbound.empty()) fSession.Write(outbound.data(),outbound.size());
+            if(!pending.empty() && !fSession.Flush(pending,10)) {
+                std::lock_guard<std::mutex> guard(fMutex);
+                fIncoming+="\r\n\x1b[0m[Kiri: the terminal stopped accepting input; "+std::to_string(pending.size()+fOutgoing.size())+" bytes were not sent.]\r\n";
+                break;
+            }
             if(buffered<4*1024*1024) {
                 auto n=fSession.Read(buffer,sizeof(buffer),20);
                 if(n<0) break;
