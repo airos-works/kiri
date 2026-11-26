@@ -50,6 +50,35 @@ static void FramingAndPositions() {
     CHECK(Throws([]{RpcFramer().Feed(std::string(8200,'x'));}));
     CHECK(Throws([]{RpcFramer().Feed("Content-Length: 2\r\n\r\n[]");}));
 }
+// PositionMap answers exactly as OffsetAt/PositionAt, including for columns
+// past a line end, split surrogates and malformed bytes (#13).
+static void IndexedPositions() {
+    const char* pieces[]={"a","é","日","😀","\r","\n","\r\n","\t","𝄞","ß","  "};
+    uint32_t seed=12345;auto next=[&]{seed=seed*1103515245+12345;return (seed>>16)&0x7fff;};
+    for(int round=0;round<300;++round) {
+        std::string text;for(int i=0,n=next()%40;i<n;++i) text+=pieces[next()%11];
+        for(auto encoding:{PositionEncoding::UTF16,PositionEncoding::UTF8,PositionEncoding::UTF32}) {
+            PositionMap map(text,encoding);
+            for(size_t offset=0;offset<=text.size()+2;++offset) { auto a=PositionAt(text,offset,encoding),b=map.Position(offset);CHECK(a.line==b.line && a.character==b.character); }
+            for(size_t line=0;line<12;++line) for(size_t character=0;character<14;++character) CHECK(OffsetAt(text,{line,character},encoding)==map.Offset({line,character}));
+            CHECK(OffsetAt(text,{0,size_t(INT32_MAX)},encoding)==map.Offset({0,size_t(INT32_MAX)}));
+        }
+    }
+    // Malformed bytes (never sent by the editor) still give in-range answers.
+    std::string malformed="a\xc3\nb\xff\r\n\xe6\x97";PositionMap broken(malformed,PositionEncoding::UTF16);
+    for(size_t line=0;line<4;++line) for(size_t character=0;character<6;++character) CHECK(broken.Offset({line,character})<=malformed.size());
+    for(size_t offset=0;offset<=malformed.size();++offset) CHECK(broken.Position(offset).line<4);
+    // Decoding many symbols scales linearly: one index per document.
+    std::string text;Json symbols=Json::array();
+    for(int i=0;i<20000;++i) {
+        text+="int symbol"+std::to_string(i)+" = 1; // "+std::string(60,'x')+"\n";
+        Json range={{"start",PositionJSON({size_t(i),4})},{"end",PositionJSON({size_t(i),20})}};
+        symbols.push_back({{"name","symbol"+std::to_string(i)},{"kind",13},{"range",range},{"selectionRange",range}});
+    }
+    auto began=std::chrono::steady_clock::now();auto decoded=ReadSymbols(symbols,text,"file:///x.c",PositionEncoding::UTF16);
+    CHECK(decoded.size()==10000);CHECK(decoded.back().start==OffsetAt(text,{9999,4}));
+    CHECK(std::chrono::steady_clock::now()-began<2s);
+}
 static void EditsAndSymbols() {
     std::string text="const emoji = '😀';\nconst result = obj.na;\n";size_t caret=text.find("na;")+2,start=caret-2;
     Json value={{"label","name"},{"textEdit",{{"range",Range(1,19,21)},{"newText","name"}}},
@@ -269,7 +298,7 @@ int main(int argc,char** argv) {
     signal(SIGPIPE,SIG_IGN);
     if(argc>=3 && std::string(argv[1])=="--rpc-fixture") return Fixture(argv[2]);
     try {
-        FramingAndPositions();EditsAndSymbols();Configuration();Transport(CanonicalPath(argv[0]));ShutdownDuringInitialization(CanonicalPath(argv[0]));
+        FramingAndPositions();IndexedPositions();EditsAndSymbols();Configuration();Transport(CanonicalPath(argv[0]));ShutdownDuringInitialization(CanonicalPath(argv[0]));
         if(argc==3 && std::string(argv[1])=="--tools") RealTools(CanonicalPath(argv[2]));
         std::cout<<checks<<" language checks passed\n";return 0;
     } catch(const std::exception& error) { std::cerr<<error.what()<<"\n";return 1; }

@@ -21,6 +21,23 @@ struct CompletionItem {
 };
 TextPosition PositionAt(std::string_view text,size_t offset,PositionEncoding encoding=PositionEncoding::UTF16);
 size_t OffsetAt(std::string_view text,TextPosition position,PositionEncoding encoding=PositionEncoding::UTF16);
+// OffsetAt and PositionAt over one text, indexed once: line starts plus every
+// character whose width is not one unit, so each lookup is logarithmic
+// instead of a scan from byte zero. For UTF-8 text the results equal the free
+// functions', including out-of-range columns and split surrogate pairs;
+// malformed bytes still give in-range results. The text must outlive the map.
+class PositionMap {
+public:
+    PositionMap(std::string_view text,PositionEncoding encoding);
+    size_t Offset(TextPosition position) const;
+    TextPosition Position(size_t offset) const;
+private:
+    struct Character { size_t byte,unit,bytes,units; };
+    size_t UnitAt(size_t byte) const;
+    std::string_view fText;
+    std::vector<size_t> fLines; // byte offset of each line's first character
+    std::vector<Character> fWide;
+};
 Json PositionJSON(TextPosition position);
 TextPosition ReadPosition(const Json& position);
 std::string FileURI(const std::string& path);

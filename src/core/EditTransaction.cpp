@@ -100,11 +100,12 @@ EditPlan WorkspaceEditPlan(const Json& edit,PositionEncoding encoding,const std:
         if(!version.is_null() && (!version.is_number_integer() || !file.before.open || version.get<int>()!=file.before.version))
             throw std::runtime_error("Language server document version is stale: "+path);
         if(!edits.is_array()) throw std::runtime_error("Invalid document edits: "+path);
+        PositionMap positions(file.before.text,encoding);
         for(const auto& change:edits) {
             if(change.contains("annotationId")) throw std::runtime_error("Annotated edits are not supported. No files were changed.");
             const auto& range=change.at("range");auto a=ReadPosition(range.at("start")),b=ReadPosition(range.at("end"));
-            auto start=OffsetAt(file.before.text,a,encoding),end=OffsetAt(file.before.text,b,encoding);
-            auto actualA=PositionAt(file.before.text,start,encoding),actualB=PositionAt(file.before.text,end,encoding);
+            auto start=positions.Offset(a),end=positions.Offset(b);
+            auto actualA=positions.Position(start),actualB=positions.Position(end);
             if(actualA.line!=a.line || actualA.character!=a.character || actualB.line!=b.line || actualB.character!=b.character)
                 throw std::runtime_error("Invalid or stale Unicode edit range: "+path);
             file.edits.push_back({{start,end,change.at("newText").get<std::string>()},true});

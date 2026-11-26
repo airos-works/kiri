@@ -138,5 +138,10 @@ static void WorkspaceEdits() {
     edit["changes"][FileURI(path)][0]["range"]=Range(0,1,6);CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
     edit["changes"][FileURI(path)][0]["range"]=Range(0,3,99);CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
     edit["changes"][FileURI(path)]=Json::array({change["edits"][0],change["edits"][0]});CHECK(Throws([&]{WorkspaceEditPlan(edit,PositionEncoding::UTF16,resolver);}));
+    // Many references to one identifier are mapped through one index (#13).
+    auto many=snapshot;many.text.clear();Json refs=Json::array();
+    for(size_t i=0;i<20000;++i) { many.text+="😀 value = value + 1; // "+std::string(50,'x')+"\n";refs.push_back({{"range",Range(i,3,8)},{"newText","total"}});refs.push_back({{"range",Range(i,11,16)},{"newText","total"}}); }
+    auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
+    CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
 int main() { try { Queries();PathFilters();ProjectQueries();GitListingFailure();Transactions();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }

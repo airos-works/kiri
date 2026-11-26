@@ -43,6 +43,57 @@ size_t OffsetAt(std::string_view text,TextPosition position,PositionEncoding enc
     }
     return at;
 }
+PositionMap::PositionMap(std::string_view text,PositionEncoding encoding):fText(text) {
+    // The same walk as PositionAt/OffsetAt, so malformed bytes split lines identically.
+    fLines.push_back(0);size_t unit=0;
+    for(size_t at=0;at<text.size();) {
+        if(text[at]=='\r' || text[at]=='\n') {
+            if(text[at]=='\r' && at+1<text.size() && text[at+1]=='\n') { ++at;++unit; }
+            ++at;++unit;fLines.push_back(at);continue;
+        }
+        auto bytes=CharacterBytes(text,at),units=Units(bytes,encoding);
+        if(bytes!=1 || units!=1) fWide.push_back({at,unit,bytes,units});
+        at+=bytes;unit+=units;
+    }
+}
+size_t PositionMap::UnitAt(size_t byte) const {
+    // Units before byte, which is a character boundary.
+    auto found=std::upper_bound(fWide.begin(),fWide.end(),byte,[](size_t b,const Character& c){return b<c.byte;});
+    if(found==fWide.begin()) return byte;
+    --found;if(byte<found->byte+found->bytes) return found->unit; // at its first byte
+    return found->unit+found->units+(byte-found->byte-found->bytes);
+}
+size_t PositionMap::Offset(TextPosition position) const {
+    if(position.line>=fLines.size()) return fText.size();
+    size_t start=fLines[position.line],end=start;
+    if(position.line+1<fLines.size()) { end=fLines[position.line+1];if(end>start && fText[end-1]=='\n') --end;if(end>start && fText[end-1]=='\r') --end; }
+    else end=fText.size();
+    size_t base=UnitAt(start),target=base+std::min(position.character,end-start+fText.size()); // bounded: no overflow
+    // The last wide character starting at or before the target unit.
+    auto found=std::upper_bound(fWide.begin(),fWide.end(),target,[](size_t u,const Character& c){return u<c.unit;});
+    size_t byte;
+    if(found==fWide.begin() || (found-1)->byte<start) byte=start+(target-base);
+    else {
+        auto& c=*(found-1);
+        if(target<c.unit+c.units) byte=c.byte; // inside the character: stop before it
+        else byte=c.byte+c.bytes+(target-c.unit-c.units);
+    }
+    return std::min(byte,end);
+}
+TextPosition PositionMap::Position(size_t offset) const {
+    offset=std::min(offset,fText.size());
+    auto line=size_t(std::upper_bound(fLines.begin(),fLines.end(),offset)-fLines.begin())-1;
+    // Between the CR and LF of a CRLF pair, PositionAt has already moved on.
+    if(offset>0 && offset<fText.size() && fText[offset-1]=='\r' && fText[offset]=='\n' && fLines[line]!=offset) {
+        auto owner=std::upper_bound(fWide.begin(),fWide.end(),offset-1,[](size_t b,const Character& c){return b<c.byte;});
+        bool swallowed=owner!=fWide.begin() && (owner-1)->byte+(owner-1)->bytes>offset-1; // by a malformed lead byte
+        if(!swallowed) return {line+1,0};
+    }
+    // An offset inside a character counts only the characters before it.
+    auto found=std::upper_bound(fWide.begin(),fWide.end(),offset,[](size_t b,const Character& c){return b<c.byte;});
+    if(found!=fWide.begin() && (found-1)->byte<offset && offset<(found-1)->byte+(found-1)->bytes && (found-1)->byte>=fLines[line]) offset=(found-1)->byte;
+    return {line,UnitAt(offset)-UnitAt(fLines[line])};
+}
 Json PositionJSON(TextPosition value) { return {{"line",value.line},{"character",value.character}}; }
 TextPosition ReadPosition(const Json& value) {
     if(!value.at("line").is_number_integer() || !value.at("character").is_number_integer()) throw std::runtime_error("Invalid language server position");
@@ -60,6 +111,7 @@ std::string FileURI(const std::string& path) {
 }
 std::vector<DocumentSymbol> ReadSymbols(const Json& result,std::string_view text,const std::string& uri,PositionEncoding encoding) {
     std::vector<DocumentSymbol> symbols;if(!result.is_array()) return symbols;
+    PositionMap positions(text,encoding);
     std::function<void(const Json&,int,const std::string&)> append=[&](const Json& rows,int depth,const std::string& container) {
         if(depth>64 || !rows.is_array()) return;
         for(const auto& row:rows) {
@@ -69,8 +121,8 @@ std::vector<DocumentSymbol> ReadSymbols(const Json& result,std::string_view text
                 if(flat && row.at("location").at("uri")!=uri) continue;
                 auto selected=flat?range:row.value("selectionRange",range);
                 DocumentSymbol symbol{row.at("name").get<std::string>(),row.value("containerName",container),row.value("detail",std::string()),row.value("kind",0),depth,
-                    OffsetAt(text,ReadPosition(range.at("start")),encoding),OffsetAt(text,ReadPosition(range.at("end")),encoding),
-                    OffsetAt(text,ReadPosition(selected.at("start")),encoding)};
+                    positions.Offset(ReadPosition(range.at("start"))),positions.Offset(ReadPosition(range.at("end"))),
+                    positions.Offset(ReadPosition(selected.at("start")))};
                 if(symbol.end<symbol.start || symbol.selection<symbol.start || symbol.selection>symbol.end) continue;
                 symbols.push_back(symbol);
                 if(row.contains("children")) append(row["children"],depth+1,container.empty()?symbol.name:container+" › "+symbol.name);
