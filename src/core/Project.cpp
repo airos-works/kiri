@@ -169,6 +169,8 @@ SearchResult SearchProject(const std::string& root,const ProjectIndex& index,con
     SearchResult result;TextQuery query(options);result.error=replacement?query.ValidateReplacement(*replacement):query.Error();
     if(!result.error.empty() || options.query.empty()) return result;
     std::set<std::string> paths(index.paths.begin(),index.paths.end());
+    // Component-wise containment: for the root folder / the prefix is "/", not "//".
+    auto canonicalRoot=CanonicalPath(root);if(canonicalRoot.empty() || canonicalRoot.back()!='/') canonicalRoot+='/';
     // The index decides ignored-file inclusion. Unsaved buffers replace the
     // contents of indexed files without silently widening the selected scope.
     size_t snapshotBytes=0;
@@ -176,7 +178,7 @@ SearchResult SearchProject(const std::string& root,const ProjectIndex& index,con
         if(cancel && cancel->load()) { result.cancelled=true;break; }
         if(!MatchesProjectPath(relative,options)) { ++result.filtered;continue; }
         fs::path path=fs::path(root)/relative;std::error_code error;
-        if(fs::path(relative).is_absolute() || relative==".." || relative.rfind("../",0)==0 || CanonicalPath(path.string()).rfind(CanonicalPath(root)+"/",0)!=0
+        if(fs::path(relative).is_absolute() || relative==".." || relative.rfind("../",0)==0 || CanonicalPath(path.string()).rfind(canonicalRoot,0)!=0
                 || fs::is_symlink(path,error)) { ++result.symlinks;++result.skipped;continue; }
         FileData data;bool fromBuffer=buffers && buffers->count(relative);
         if(fromBuffer) data=buffers->at(relative);

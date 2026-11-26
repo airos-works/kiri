@@ -57,6 +57,12 @@ static void ProjectQueries() {
     options.query="[";CHECK(!SearchProject(temp.path,all,options).error.empty());
     options.include="src/**/*.ts";options.query="name";CHECK(SearchProject(temp.path,all,options).matches.size()==2);options.include="**/*.ts";
     options.query="name";options.folders="src;tests";CHECK(SearchProject(temp.path,all,options).matches.size()==3);
+    // The file system root is a valid project folder (#10).
+    ProjectIndex rooted;rooted.paths={temp.path.substr(1)+"/tests/a.ts"};ProjectSearchOptions plain;plain.query="name";
+    result=SearchProject("/",rooted,plain);CHECK(result.matches.size()==1);CHECK(result.symlinks==0);
+    auto rootPlan=ReplacementPlan("/",rooted,plain,"label",{});CHECK(rootPlan.files.size()==1);CHECK(rootPlan.files[0].after=="label\n");
+    rooted.paths={temp.path.substr(1)+"/src/link"};CHECK(SearchProject("/",rooted,plain).symlinks==1);
+    ProjectIndex parent;parent.paths={"a.ts"};CHECK(SearchProject(temp.path+"/tests",parent,plain).matches.size()==1);
     index.paths.push_back("src/unavailable");options.include="";result=SearchProject(temp.path,index,options);CHECK(result.unreadable==1);
 }
 static void Transactions() {
