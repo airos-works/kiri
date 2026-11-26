@@ -29,6 +29,9 @@ std::vector<Commit> ParseGitLog(std::string_view data);
 std::optional<std::string> GitHubRepository(std::string remote);
 std::string EncodeURLPath(std::string_view path);
 std::optional<size_t> MapLineToBase(std::string_view diff, size_t currentLine);
+// Paths that unstage the selected rows. A staged rename also names its
+// source, so the index returns to HEAD instead of recording a deletion.
+std::vector<std::string> UnstagePaths(const std::vector<GitFile>& files);
 
 class GitRepository {
 public:

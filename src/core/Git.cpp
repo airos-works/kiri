@@ -145,6 +145,12 @@ std::optional<size_t> MapLineToBase(std::string_view diff, size_t currentLine) {
     auto base = static_cast<long long>(currentLine)+delta;
     return base > 0 ? std::optional<size_t>(base) : std::nullopt;
 }
+std::vector<std::string> UnstagePaths(const std::vector<GitFile>& files) {
+    std::vector<std::string> paths;
+    auto add=[&](const std::string& path) { if(std::find(paths.begin(),paths.end(),path)==paths.end()) paths.push_back(path); };
+    for (const auto& file : files) { add(file.path); if (file.index == 'R' && !file.originalPath.empty()) add(file.originalPath); }
+    return paths;
+}
 ProcessResult GitRepository::Run(std::vector<std::string> arguments, const std::atomic<bool>* cancel,
     std::string input, size_t limit) const {
     std::vector<std::string> args{"git", "--no-pager", "-c", "color.ui=false", "-c", "core.quotepath=false"};

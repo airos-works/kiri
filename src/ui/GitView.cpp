@@ -206,8 +206,10 @@ void GitView::LoadCommitFile(int index) {
 }
 void GitView::Operate(uint32 command) {
     if(fBusy || fRoot.empty() || !fJobs) return;
+    std::vector<GitFile> files;
+    for(int32 n=0;;++n) { int32 selected=fChanges->CurrentSelection(n);if(selected<0) break;if(selected<static_cast<int32>(fFiles.size())) files.push_back(fFiles[selected]); }
     std::vector<std::string> paths;
-    for(int32 n=0;;++n) { int32 selected=fChanges->CurrentSelection(n);if(selected<0) break;if(selected<static_cast<int32>(fFiles.size())) paths.push_back(fFiles[selected].path); }
+    if(command==kGitUnstage) paths=UnstagePaths(files);else for(auto& file:files) paths.push_back(file.path);
     std::string message=fCommitMessage->Text();auto root=fRoot;auto generation=fGeneration;
     fBusy=true;fStatus->SetText("Running Git…");
     fJobs->Submit([this,root,paths,message,generation,command](const auto& cancel) {

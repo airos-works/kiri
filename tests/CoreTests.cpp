@@ -3,6 +3,7 @@
 #include "core/Project.h"
 #include "core/Terminal.h"
 #include "core/Recovery.h"
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -140,6 +141,17 @@ void GitIntegration() {
     CHECK(git.CommitDiff(history[0].hash).output.find("+new")!=std::string::npos);
     CHECK(git.Run({"mv",file,"renamed\nwith newline.cpp"}).ok());
     files=ParseGitStatus(git.Status().output);CHECK(files.size()==1);CHECK(files[0].path=="renamed\nwith newline.cpp");CHECK(files[0].originalPath==file);
+    // Unstaging a rename restores both names in the index and keeps the
+    // renamed file; other staged changes stay staged (#9).
+    CHECK(git.Run({"commit","-qm","Rename"}).ok());CHECK(git.Run({"mv","renamed\nwith newline.cpp","back.cpp"}).ok());
+    Put(fs::path(t.path)/"other.txt","other\n");CHECK(git.Stage({"other.txt"}).ok());
+    files=ParseGitStatus(git.Status().output);auto rename=std::find_if(files.begin(),files.end(),[](auto& f){return f.index=='R';});CHECK(rename!=files.end());
+    CHECK((UnstagePaths({*rename})==std::vector<std::string>{"back.cpp","renamed\nwith newline.cpp"}));
+    CHECK(git.Unstage(UnstagePaths({*rename})).ok());
+    CHECK(git.Run({"diff","--cached","--name-only","-z"}).output==std::string("other.txt")+'\0');
+    CHECK(fs::exists(fs::path(t.path)/"back.cpp"));CHECK(!fs::exists(fs::path(t.path)/"renamed\nwith newline.cpp"));
+    fs::rename(fs::path(t.path)/"back.cpp",fs::path(t.path)/"renamed\nwith newline.cpp");CHECK(git.Unstage({"other.txt"}).ok());fs::remove(fs::path(t.path)/"other.txt");
+    CHECK(ParseGitStatus(git.Status().output).empty());
     Put(fs::path(t.path)/".gitignore","ignored/\n");fs::create_directory(fs::path(t.path)/"ignored");Put(fs::path(t.path)/"ignored/secret","dont index");
     auto index=IndexProject(t.path);CHECK(!index.paths.empty());
     for(auto& p:index.paths) CHECK(p.find("ignored/")!=0);
