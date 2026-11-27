@@ -393,41 +393,70 @@ TextMatches Editor::SearchMatches(const SearchOptions& options,bool highlight) {
     }
     return result;
 }
+bool Editor::ScopeReady() {
+    fSearchError.clear();
+    if(fSelectionSearch && (!Matches(fScopeText) || fScopeStart==fScopeEnd)) { fSearchError="Select text and enable In Selection again to capture a search scope.";return false; }
+    return true;
+}
+std::optional<TextEdit> Editor::NextMatch(const TextQuery& query,const std::string& text,bool backwards,const std::string* replacement) {
+    // One match from the selection, wrapping once: never a list of every
+    // earlier match, so navigation works past any count limit.
+    size_t first=fSelectionSearch?fScopeStart:0,last=fSelectionSearch?std::min<size_t>(fScopeEnd,text.size()):text.size();
+    size_t start=std::clamp<size_t>(SendMessage(SCI_GETSELECTIONSTART),first,last),end=std::clamp<size_t>(SendMessage(SCI_GETSELECTIONEND),first,last);
+    auto skip=[&](const TextEdit& match){return match.start==match.end && sptr_t(match.start)==fLastEmpty;};
+    auto failed=[&](const TextMatches& found){if(!found.error.empty()) fSearchError=found.error;return !found.error.empty();};
+    if(!backwards) {
+        for(auto from:{end,first}) {
+            auto found=query.FindRange(text,first,last,from,SIZE_MAX,2,nullptr,replacement);if(failed(found)) return std::nullopt;
+            for(auto& match:found.matches) if(!skip(match)) return match;
+        }
+        return std::nullopt;
+    }
+    // Backwards: the last match ending at or before the selection start, in
+    // windows that double towards the start of the scope; then wrap to the end.
+    for(auto limit:{start,last}) {
+        for(size_t window=64*1024;;window*=2) {
+            size_t from=limit-first>window?limit-window:first;
+            while(from>first && (static_cast<unsigned char>(text[from])&0xc0)==0x80) --from;
+            auto found=query.FindRange(text,first,last,from,limit,100000,nullptr,replacement);if(failed(found)) return std::nullopt;
+            for(auto it=found.matches.rbegin();it!=found.matches.rend();++it) if(it->end<=limit && !skip(*it)) return *it;
+            if(from==first) break;
+        }
+    }
+    return std::nullopt;
+}
 bool Editor::Find(const SearchOptions& options,bool backwards) {
-    auto found=SearchMatches(options);if(found.matches.empty()) return false;
+    if(!ScopeReady()) return false;
+    TextQuery query(options);if(!query.Error().empty()) { fSearchError=query.Error();return false; }
     auto key=options.query+char(options.regex)+char(options.matchCase)+char(options.wholeWord);
     if(key!=fLastQuery) { fLastQuery=key;fLastEmpty=-1; }
-    auto start=SendMessage(SCI_GETSELECTIONSTART),end=SendMessage(SCI_GETSELECTIONEND);
-    const TextEdit* selected=nullptr;
-    if(backwards) {
-        for(auto it=found.matches.rbegin();it!=found.matches.rend();++it)
-            if(it->end<=size_t(start) && !(it->start==it->end && sptr_t(it->start)==fLastEmpty)) { selected=&*it;break; }
-        if(!selected) selected=&found.matches.back();
-    } else {
-        for(const auto& match:found.matches)
-            if(match.start>=size_t(end) && !(match.start==match.end && sptr_t(match.start)==fLastEmpty)) { selected=&match;break; }
-        if(!selected) selected=&found.matches.front();
-    }
-    fLastEmpty=selected->start==selected->end?sptr_t(selected->start):-1;
-    SendMessage(SCI_SETSEL,selected->start,selected->end);SendMessage(SCI_SCROLLCARET);return true;
+    auto match=NextMatch(query,Text(),backwards);if(!match) return false;
+    fLastEmpty=match->start==match->end?sptr_t(match->start):-1;
+    SendMessage(SCI_SETSEL,match->start,match->end);SendMessage(SCI_SCROLLCARET);return true;
 }
 int Editor::Replace(const SearchOptions& options,const std::string& replacement,bool all) {
     fSearchError.clear();
     if(SendMessage(SCI_GETREADONLY)) { fSearchError="This document is read-only.";return 0; }
-    auto initial=SearchMatches(options,false);if(!initial.error.empty()) return 0;
-    auto text=Text();auto found=TextQuery(options).Find(text,fSelectionSearch?fScopeStart:0,fSelectionSearch?fScopeEnd:SIZE_MAX,100000,nullptr,&replacement);
-    if(!found.error.empty() || found.truncated) { fSearchError=found.truncated?"More than 100,000 matches. Narrow the selection before replacing.":found.error;return 0; }
-    if(found.matches.empty()) return 0;
-    std::vector<TextEdit> edits;
-    if(all) edits=std::move(found.matches);
-    else {
-        auto start=SendMessage(SCI_GETSELECTIONSTART),end=SendMessage(SCI_GETSELECTIONEND);
-        auto chosen=found.matches.end();
-        for(auto it=found.matches.begin();it!=found.matches.end();++it) if(it->start==size_t(start) && it->end==size_t(end)) { chosen=it;break; }
-        if(chosen==found.matches.end()) chosen=std::find_if(found.matches.begin(),found.matches.end(),[&](const auto& m){return m.start>=size_t(end);});
-        if(chosen==found.matches.end()) chosen=found.matches.begin();
-        edits.push_back(*chosen);
+    if(!ScopeReady()) return 0;
+    TextQuery query(options);if(auto error=query.ValidateReplacement(replacement);!error.empty()) { fSearchError=error;return 0; }
+    auto text=Text();std::vector<TextEdit> edits;
+    if(all) {
+        // Replace All still needs every match: it refuses a truncated list.
+        auto found=query.Find(text,fSelectionSearch?fScopeStart:0,fSelectionSearch?fScopeEnd:SIZE_MAX,100000,nullptr,&replacement);
+        if(!found.error.empty() || found.truncated) { fSearchError=found.truncated?"More than 100,000 matches. Narrow the selection before replacing.":found.error;return 0; }
+        edits=std::move(found.matches);
+    } else {
+        // The selected match, else the next one: found directly, at any count.
+        size_t start=SendMessage(SCI_GETSELECTIONSTART),end=SendMessage(SCI_GETSELECTIONEND);
+        size_t first=fSelectionSearch?fScopeStart:0,last=fSelectionSearch?std::min<size_t>(fScopeEnd,text.size()):text.size();
+        if(start>=first && start<=last) {
+            auto here=query.FindRange(text,first,last,start,start,1,nullptr,&replacement);
+            if(!here.error.empty()) { fSearchError=here.error;return 0; }
+            if(!here.matches.empty() && here.matches[0].start==start && here.matches[0].end==end) edits.push_back(std::move(here.matches[0]));
+        }
+        if(edits.empty()) { fLastEmpty=-1;auto next=NextMatch(query,text,false,&replacement);if(next) edits.push_back(std::move(*next)); }
     }
+    if(edits.empty()) return 0;
     ApplyEdits(edits);
     if(fSelectionSearch) {
         for(const auto& edit:edits) fScopeEnd=fScopeEnd-(edit.end-edit.start)+edit.text.size();
@@ -438,7 +467,7 @@ int Editor::Replace(const SearchOptions& options,const std::string& replacement,
         if(edits[0].start==edits[0].end) position=SendMessage(SCI_POSITIONAFTER,position);
         SendMessage(SCI_SETSEL,position,position);
     }
-    fLastEmpty=-1;SearchMatches(options);return int(edits.size());
+    fLastEmpty=-1;return int(edits.size());
 }
 bool Editor::Find(const std::string& query,bool backwards,bool matchCase,bool regex) { return Find(SearchOptions{query,matchCase,regex,false},backwards); }
 bool Editor::ReplaceOne(const std::string& query,const std::string& replacement,bool matchCase) { return Replace(SearchOptions{query,matchCase,false,false},replacement,false)>0; }

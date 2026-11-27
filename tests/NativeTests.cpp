@@ -196,6 +196,22 @@ static void AdvancedSearch(kiri::Editor* editor) {
     CHECK(editor->SearchMatches(options).matches.size()==2);options.matchCase=true;CHECK(editor->SearchMatches(options).matches.size()==1);
     editor->SendMessage(SCI_SETREADONLY,1);CHECK(editor->Find(options));CHECK(editor->Replace(options,"new",true)==0);CHECK(!editor->SearchError().empty());
     CHECK(editor->Text()=="name names NAME\r\n");editor->SendMessage(SCI_SETREADONLY,0);editor->ClearSearchHighlights();CHECK(editor->SendMessage(SCI_INDICATORVALUEAT,8,0)==0);
+    // Past 100,000 matches, Find and a single Replace still work from the
+    // caret and wrap; Replace All keeps its completeness limit (#27).
+    {
+        editor->SetText(std::string(150001,'x').c_str());SearchOptions many;many.query="x";many.matchCase=true;
+        auto selected=[&]{return std::make_pair(int(editor->SendMessage(SCI_GETSELECTIONSTART)),int(editor->SendMessage(SCI_GETSELECTIONEND)));};
+        auto began=system_time();
+        editor->SendMessage(SCI_SETSEL,0,0);CHECK(editor->Find(many));CHECK(selected()==std::make_pair(0,1));
+        editor->SendMessage(SCI_SETSEL,149999,149999);CHECK(editor->Find(many));CHECK(selected()==std::make_pair(149999,150000));
+        CHECK(editor->Find(many));CHECK(selected()==std::make_pair(150000,150001));CHECK(editor->Find(many));CHECK(selected()==std::make_pair(0,1));
+        CHECK(editor->Find(many,true));CHECK(selected()==std::make_pair(150000,150001));CHECK(editor->Find(many,true));CHECK(selected()==std::make_pair(149999,150000));
+        CHECK(editor->Replace(many,"y",false)==1);CHECK(editor->Text()[149999]=='y' && editor->Text().size()==150001);CHECK(selected()==std::make_pair(150000,150000));
+        CHECK(editor->Replace(many,"z",false)==1);CHECK(editor->Text()[150000]=='z');
+        CHECK(editor->Replace(many,"y",true)==0);CHECK(!editor->SearchError().empty());
+        auto count=editor->SearchMatches(many);CHECK(count.truncated && count.error.empty() && count.matches.size()==100000);
+        std::cout<<"150,001 matches: first/last/wrap navigation and single replacement in "<<(system_time()-began)/1000<<" ms\n";CHECK(system_time()-began<3000000);
+    }
 }
 int main(int argc,char** argv) {
     try {

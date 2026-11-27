@@ -82,8 +82,12 @@ TextQuery::TextQuery(const SearchOptions& options):fImpl(std::make_unique<Impl>(
 
     auto* context=pcre2_compile_context_create(nullptr);pcre2_set_newline(context,PCRE2_NEWLINE_ANYCRLF);
     int error=0;PCRE2_SIZE offset=0;
+    // Only a regular expression can backtrack without bound, so only it pays
+    // for a callout at every pattern item (the time and cancel budget).
+    // Literal and whole-word literal queries match in linear time.
+    uint32_t callouts=options.regex?PCRE2_AUTO_CALLOUT:0;
     q.code=pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),pattern.size(),
-        PCRE2_UTF|PCRE2_UCP|PCRE2_MULTILINE|PCRE2_NEVER_BACKSLASH_C|PCRE2_AUTO_CALLOUT|(options.matchCase?0:PCRE2_CASELESS),&error,&offset,context);
+        PCRE2_UTF|PCRE2_UCP|PCRE2_MULTILINE|PCRE2_NEVER_BACKSLASH_C|callouts|(options.matchCase?0:PCRE2_CASELESS),&error,&offset,context);
     pcre2_compile_context_free(context);
     if(!q.code) q.error="Pattern at byte "+std::to_string(offset+1)+": "+RegexError(error);
     else {
@@ -91,7 +95,7 @@ TextQuery::TextQuery(const SearchOptions& options):fImpl(std::make_unique<Impl>(
             pcre2_code_free(q.code);
             pattern="(?<![\\p{L}\\p{N}\\p{M}_])(?:"+pattern+")(?![\\p{L}\\p{N}\\p{M}_])";
             auto* wrappedContext=pcre2_compile_context_create(nullptr);pcre2_set_newline(wrappedContext,PCRE2_NEWLINE_ANYCRLF);
-            q.code=pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),pattern.size(),PCRE2_UTF|PCRE2_UCP|PCRE2_MULTILINE|PCRE2_NEVER_BACKSLASH_C|PCRE2_AUTO_CALLOUT|(options.matchCase?0:PCRE2_CASELESS),&error,&offset,wrappedContext);
+            q.code=pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),pattern.size(),PCRE2_UTF|PCRE2_UCP|PCRE2_MULTILINE|PCRE2_NEVER_BACKSLASH_C|callouts|(options.matchCase?0:PCRE2_CASELESS),&error,&offset,wrappedContext);
             pcre2_compile_context_free(wrappedContext);
             if(!q.code) q.error="Whole-word pattern: "+RegexError(error);
         }
@@ -106,16 +110,19 @@ std::string TextQuery::ValidateReplacement(const std::string& replacement) const
     try { fImpl->Expand(replacement,{},nullptr);return {}; }catch(const std::exception& e) { return e.what(); }
 }
 TextMatches TextQuery::Find(std::string_view text,size_t start,size_t end,size_t limit,const std::atomic<bool>* cancel,const std::string* replacement) const {
+    return FindRange(text,start,end,start,SIZE_MAX,limit,cancel,replacement);
+}
+TextMatches TextQuery::FindRange(std::string_view text,size_t start,size_t end,size_t from,size_t until,size_t limit,const std::atomic<bool>* cancel,const std::string* replacement) const {
     TextMatches result;auto& q=*fImpl;result.error=replacement?ValidateReplacement(*replacement):Error();
     if(!result.error.empty() || q.empty) return result;
     end=std::min(end,text.size());
-    if(start>end) { result.error="Invalid search selection.";return result; }
+    if(start>end || from<start || from>end) { result.error="Invalid search selection.";return result; }
     auto subject=text.substr(start,end-start);
     if(!IsValidUTF8(subject)) { result.error="Search scope must contain complete UTF-8 characters.";return result; }
     auto* data=pcre2_match_data_create_from_pattern(q.code,nullptr);auto* context=pcre2_match_context_create(nullptr);
     pcre2_set_match_limit(context,1000000);pcre2_set_depth_limit(context,1000);pcre2_set_heap_limit(context,16384);
     Budget budget{cancel};pcre2_set_callout(context,Budget::Check,&budget);
-    size_t offset=0;
+    size_t offset=from-start;
     while(offset<=subject.size()) {
         if(cancel && cancel->load()) { result.cancelled=true;break; }
         int count=pcre2_match(q.code,reinterpret_cast<PCRE2_SPTR>(subject.data()),subject.size(),offset,PCRE2_NO_UTF_CHECK,data,context);
@@ -126,6 +133,7 @@ TextMatches TextQuery::Find(std::string_view text,size_t start,size_t end,size_t
             break;
         }
         auto* offsets=pcre2_get_ovector_pointer(data);
+        if(until!=SIZE_MAX && start+offsets[0]>until) break;
         if(result.matches.size()==limit) { result.truncated=true;break; }
         result.matches.push_back({start+offsets[0],start+offsets[1],replacement?q.Expand(*replacement,subject,offsets):std::string()});
         offset=offsets[1];

@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <ScintillaView.h>
 #include "ui/Theme.h"
 #include "ui/EditorSettings.h"
@@ -82,6 +83,9 @@ public:
     // The clipboard as one paste; false for multiple or rectangular
     // selections, which keep Scintilla's own paste.
     bool PasteClipboard(bool reindent=true);
+    // Whether the In Selection scope (if on) still holds; sets SearchError.
+    bool ScopeReady();
+    std::optional<TextEdit> NextMatch(const TextQuery& query,const std::string& text,bool backwards,const std::string* replacement=nullptr);
 private:
     void LayoutMinimap();
     MinimapView* fMinimap=nullptr;

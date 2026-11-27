@@ -34,6 +34,11 @@ public:
     TextMatches Find(std::string_view text,size_t start=0,size_t end=SIZE_MAX,
         size_t limit=100000,const std::atomic<bool>* cancel=nullptr,
         const std::string* replacement=nullptr) const;
+    // Matches of the scope [start,end) that begin in [from,until], found from
+    // `from` on. The whole scope is the subject, so anchors and lookbehind see
+    // the text before `from`: a search from the caret needs no earlier matches.
+    TextMatches FindRange(std::string_view text,size_t start,size_t end,size_t from,size_t until,
+        size_t limit,const std::atomic<bool>* cancel=nullptr,const std::string* replacement=nullptr) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> fImpl;

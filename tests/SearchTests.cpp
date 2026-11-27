@@ -39,6 +39,19 @@ static void Queries() {
     options.regex=true;options.query="(a+)+$";matches=TextQuery(options).Find(std::string(10000,'a')+"!");CHECK(!matches.error.empty());CHECK(matches.matches.empty());
 }
 // Go to Line accepts exactly "line" or "line:column" (#24).
+// Searching from the caret sees the text before it (#27).
+static void RangedQueries() {
+    SearchOptions options;options.regex=true;options.matchCase=true;options.query="^ab";std::string text="ab\nab xab";
+    auto found=TextQuery(options).FindRange(text,0,text.size(),1,SIZE_MAX,10);CHECK(found.matches.size()==1 && found.matches[0].start==3);
+    options.query="(?<=x)ab";found=TextQuery(options).FindRange(text,0,text.size(),7,SIZE_MAX,10);CHECK(found.matches.size()==1 && found.matches[0].start==7);
+    options.query="ab";found=TextQuery(options).FindRange(text,0,text.size(),0,3,10);CHECK(found.matches.size()==2 && found.matches[1].start==3);
+    CHECK(!TextQuery(options).FindRange(text,2,5,1,SIZE_MAX,10).error.empty());
+    // A literal query over 150,000 matches is quick: no per-item callouts.
+    std::string many(150000,'x');options.regex=false;options.query="x";auto began=std::chrono::steady_clock::now();
+    found=TextQuery(options).Find(many);CHECK(found.truncated && found.matches.size()==100000 && found.error.empty());
+    found=TextQuery(options).FindRange(many,0,many.size(),149999,SIZE_MAX,2);CHECK(found.matches.size()==1 && found.matches[0].start==149999);
+    CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(1));
+}
 static void QuotedSelections() {
     SearchOptions options;options.regex=true;options.matchCase=true;
     for(std::string text:{"a.b(c)","x*+?[y]{2}","$^|\\path","日本.語"}) { options.query=QuoteRegex(text);auto found=TextQuery(options).Find("-"+text+"-"+text);CHECK(found.error.empty());CHECK(found.matches.size()==2);CHECK(found.matches[0].start==1); }
@@ -213,4 +226,4 @@ static void WorkspaceEdits() {
     auto began=std::chrono::steady_clock::now();auto renamed=WorkspaceEditPlan({{"changes",{{FileURI(path),refs}}}},PositionEncoding::UTF16,[&](const std::string&){return many;});
     CHECK(renamed.files.size()==1);CHECK(renamed.files[0].after.rfind("😀 total = total + 1;",0)==0);CHECK(std::chrono::steady_clock::now()-began<std::chrono::seconds(2));
 }
-int main() { try { Queries();QuotedSelections();LineColumns();EditExcerpts();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
+int main() { try { Queries();RangedQueries();QuotedSelections();LineColumns();EditExcerpts();PathFilters();ProjectQueries();GitIndexProgress();GitListingFailure();Transactions();JournalScaling();WorkspaceEdits();std::cout<<"Passed "<<checks<<" search, replacement and rename checks\n";return 0; }catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; } }
