@@ -651,9 +651,23 @@ struct WorkspaceTestAccess {
         auto* window=new BWindow(BRect(40,40,1000,600),"Analysis rendering benchmark",B_TITLED_WINDOW,0);auto* editor=new Editor();BLayoutBuilder::Group<>(window,B_VERTICAL,0).Add(editor);window->Show();CHECK(window->Lock());
         std::string text;std::vector<SemanticToken> tokens;const std::string line="Type parameter property; // 😀 benchmark padding.........................................\n";
         while(text.size()+line.size()<=kLanguageBytes) {tokens.push_back({text.size(),text.size()+4,SemanticRole::Type,false});text+=line;}text.resize(kLanguageBytes,' ');
-        editor->SetText(text);editor->SetLanguage("sample.cpp");auto start=system_time();editor->SetSemanticTokens(tokens);auto painted=system_time();
+        editor->SetText(text);editor->SetLanguage("sample.cpp");auto start=system_time();editor->SetSemanticTokens(tokens);auto firstSlice=system_time()-start;
+        // Visible tokens are applied at once; the rest arrive in slices from
+        // the window's message loop, which handles other messages between them (#34).
+        CHECK(editor->SendMessage(SCI_INDICATORVALUEAT,9,tokens.front().start));CHECK(editor->SemanticPending());
+        auto pings=std::make_shared<std::vector<bigtime_t>>();BMessenger target(window);bigtime_t worstPing=0;
+        while(editor->SemanticPending()) {
+            window->Unlock();auto sent=system_time();BMessage ping(B_PULSE),reply;target.SendMessage(&ping,&reply,1000000,1000000);worstPing=std::max(worstPing,system_time()-sent);CHECK(window->Lock());
+        }
+        auto painted=system_time();
         CHECK(editor->SendMessage(SCI_INDICATORVALUEAT,9,tokens.back().start));CHECK(!editor->Dirty());window->Unlock();snooze(100000);CHECK(window->Lock());window->UpdateIfNeeded();auto realized=system_time();
         CHECK(editor->SendMessage(SCI_GETSTYLEAT,0)>=0);start=painted-start;
+        std::cout<<"Semantic slices: first "<<firstSlice/1000.0<<" ms, longest "<<editor->SemanticLongestSlice()/1000.0<<" ms, worst message wait "<<worstPing/1000.0<<" ms\n";
+        CHECK(editor->SemanticLongestSlice()<100000);
+        // An edit while slices are pending stops them and clears everything.
+        editor->SetSemanticTokens(tokens);CHECK(editor->SemanticPending());editor->SendMessage(SCI_INSERTTEXT,0,reinterpret_cast<sptr_t>("y"));CHECK(!editor->SemanticPending());
+        window->Unlock();snooze(100000);CHECK(window->Lock());CHECK(!editor->SendMessage(SCI_INDICATORVALUEAT,9,tokens.back().start+1));
+        editor->SendMessage(SCI_UNDO);editor->SetSemanticTokens(tokens);while(editor->SemanticPending()) { window->Unlock();snooze(5000);CHECK(window->Lock()); }
         auto cleared=system_time();editor->SendMessage(SCI_INSERTTEXT,0,reinterpret_cast<sptr_t>("x"));auto editTime=system_time()-cleared;
         CHECK(!editor->SendMessage(SCI_INDICATORVALUEAT,9,tokens.back().start));CHECK(editor->Dirty());CHECK(editor->SendMessage(SCI_GETLENGTH)==int(kLanguageBytes+1));CHECK(start<3000000 && editTime<1000000);
         std::cout<<"8 MiB native semantic indicators: "<<tokens.size()<<" tokens, apply="<<start/1000.0<<" ms, visible paint (including 100 ms settle)="<<(realized-painted)/1000.0<<" ms, clear/edit="<<editTime/1000.0<<" ms\n";window->Quit();

@@ -53,7 +53,13 @@ public:
     std::shared_ptr<EditorState> State() const { return fState; }
     void NoteInput();
     void SetDiagnostics(const std::vector<Diagnostic>& diagnostics);
+    // Applies the visible tokens and a bounded slice at once, the rest in
+    // bounded slices from this view's message loop; an edit or newer tokens
+    // stop work in progress. One indicator change per run of tokens.
     void SetSemanticTokens(const std::vector<SemanticToken>& tokens);
+    bool SemanticPending() const { return fSemanticNext<fSemanticFills.size(); }
+    bigtime_t SemanticLongestSlice() const { return fSemanticLongestSlice; }
+    void MessageReceived(BMessage* message) override;
     void ClearAnalysis();
     void ShowDiagnostic(size_t position);
     int64 InputRevision() const { return fState->inputRevision; }
@@ -87,6 +93,12 @@ public:
     bool ScopeReady();
     std::optional<TextEdit> NextMatch(const TextQuery& query,const std::string& text,bool backwards,const std::string* replacement=nullptr);
 private:
+    void ApplySemanticSlice();
+    struct SemanticFill { int indicator;size_t start,end; };
+    std::vector<SemanticFill> fSemanticFills;
+    size_t fSemanticNext=0;
+    int64 fSemanticGeneration=0;
+    bigtime_t fSemanticLongestSlice=0;
     void LayoutMinimap();
     MinimapView* fMinimap=nullptr;
     bool fLayingOutMinimap=false;
