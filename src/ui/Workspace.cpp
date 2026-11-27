@@ -321,6 +321,20 @@ Workspace::~Workspace() {
     // the queue pointer valid until those workers have returned.
     if(fJobs) fJobs->StopAndWait();fJobs.reset();
 }
+bool Workspace::InProject(const std::string& path) const {
+    if(path.empty() || fProject.empty() || path.size()<=fProject.size() || path.compare(0,fProject.size(),fProject)!=0) return false;
+    return fProject.back()=='/' || path[fProject.size()]=='/';
+}
+void Workspace::RevealActiveFile() {
+    auto* d=Current();
+    if(!d || !InProject(d->path)) { Notice("Reveal Active File works for saved files inside the project folder.");return; }
+    if(fSidebarSplit->IsItemCollapsed(0)) fSidebarSplit->SetItemCollapsed(0,false);
+    fExplorer->Reveal(d->path);
+}
+void Workspace::MenusBeginning() {
+    BWindow::MenusBeginning();
+    if(auto* bar=dynamic_cast<BMenuBar*>(FindView("menu"))) if(auto* item=bar->FindItem(kRevealFile)) { auto* d=Current();item->SetEnabled(d && InProject(d->path)); }
+}
 void Workspace::WindowActivated(bool active) {
     BWindow::WindowActivated(active);
     if(active) { BMessage message(kWorkspaceActivated);message.AddMessenger("workspace",BMessenger(this));be_app->PostMessage(&message); }
@@ -339,7 +353,7 @@ BMenuBar* Workspace::BuildMenus() {
     auto* edit=new BMenu("Edit");add(edit,"Undo",B_UNDO,'Z');add(edit,"Redo",B_REDO,'Z',B_SHIFT_KEY);edit->AddSeparatorItem();add(edit,"Cut",B_CUT,'X');add(edit,"Copy",B_COPY,'C');add(edit,"Paste",B_PASTE,'V');add(edit,"Paste Without Reindenting",kPasteVerbatim);add(edit,"Select All",B_SELECT_ALL,'A');edit->AddSeparatorItem();
     add(edit,"Format with Prettier",kFormatPrettier);add(edit,"Complete Code",kComplete);add(edit,"Rename Symbol…",kRenameSymbol);add(edit,"Undo Last Project Edit…",kEditUndo);add(edit,"Language Tools…",kShowLanguageTools);
     edit->AddSeparatorItem();add(edit,"Document Settings…",kDocumentSettings);add(edit,"Preferences…",kShowPreferences,',');bar->AddItem(edit);
-    auto* view=new BMenu("View");add(view,"Show / Hide Files",kToggleSidebar,'B');add(view,"Show / Hide Terminal",kToggleTerminal,'`');add(view,"Problems",kToggleProblems,'M',B_SHIFT_KEY);add(view,"Source Control",kToggleGit,'G',B_SHIFT_KEY);view->AddSeparatorItem();
+    auto* view=new BMenu("View");add(view,"Show / Hide Files",kToggleSidebar,'B');add(view,"Reveal Active File",kRevealFile,'J');add(view,"Show / Hide Terminal",kToggleTerminal,'`');add(view,"Problems",kToggleProblems,'M',B_SHIFT_KEY);add(view,"Source Control",kToggleGit,'G',B_SHIFT_KEY);view->AddSeparatorItem();
     add(view,"Split Right",kSplitRight,'\\');add(view,"Split Down",kSplitDown,'\\',B_SHIFT_KEY);
     add(view,"Focus Next Pane",kNextPane,']',B_CONTROL_KEY);add(view,"Focus Previous Pane",kPreviousPane,'[',B_CONTROL_KEY);add(view,"Close Pane",kClosePane);
     add(view,"Preview Tabs",kPreviewTabs);view->FindItem(kPreviewTabs)->SetMarked(fPreviewTabs);add(view,"Minimap",kToggleMinimap);view->FindItem(kToggleMinimap)->SetMarked(fEditorSettings.minimap);view->AddSeparatorItem();
@@ -406,7 +420,7 @@ void Workspace::OpenProject(const std::string& input) {
     }
     fProject=path;++fGeneration;fGitRoot.clear();fExplorer->Clear();fGit->SetRepository("");
     // Abandon the previous project's walks and listings; the lanes are free for this one.
-    fProjectJobs->CancelAll();fBrowseJobs->CancelAll();fIndexRunning=fIndexStale=false;++fIndexSerial;
+    fProjectJobs->CancelAll();fBrowseJobs->CancelAll();fListingsInFlight.clear();fIndexRunning=fIndexStale=false;++fIndexSerial;
     auto empty=std::make_shared<ProjectIndex>();empty->partial=true;fIndex=empty;fIndexSlot->Set(empty);
     stop_watching(BMessenger(this));fWatchedNodes.clear();fProjectMonitor=std::make_shared<ProjectMonitor>(path);fMonitorPending=false;fMonitorPriority.clear();
     SetTitle((fs::path(path).filename().string()+" — Kiri").c_str());
@@ -430,12 +444,18 @@ void Workspace::OpenProject(const std::string& input) {
     if(changed && !fTerminal->Empty()) NewTerminal(fTerminal->OwnsFocus());
 }
 void Workspace::LoadDirectory(const std::string& path) {
+    // Requests for a folder that is being listed coalesce into one more
+    // listing after it, however many change notifications arrive.
+    if(auto found=fListingsInFlight.find(path);found!=fListingsInFlight.end()) { found->second=true;return; }
+    fListingsInFlight[path]=false;
     auto generation=fGeneration;bool root=path==fProject;
     fBrowseJobs->Submit([this,path,generation,root](const auto& cancel) {
         auto result=ListDirectory(path,&cancel);
         return [this,result=std::move(result),path,generation,root] {
             if(generation!=fGeneration) return;
+            auto found=fListingsInFlight.find(path);bool again=found!=fListingsInFlight.end() && found->second;if(found!=fListingsInFlight.end()) fListingsInFlight.erase(found);
             if(root) fExplorer->SetRoot(path,result);else fExplorer->AddListing(path,result);
+            if(again) LoadDirectory(path);
         };
     });
 }
@@ -1062,6 +1082,9 @@ void Workspace::MessageReceived(BMessage* message) {
             } else if(focus) focus->MessageReceived(message);
             break;
         }
+        case kRevealFile:
+            if(message->HasInt64("tab_id")) SelectTab(tabIndex());
+            RevealActiveFile();break;
         case kPasteVerbatim:
             // Like Paste, but keeps leading whitespace as copied (Makefile
             // recipes, Python, Markdown code). Native paste for multiple or

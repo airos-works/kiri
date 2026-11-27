@@ -8,9 +8,10 @@
 class BBitmap;
 class BMessageRunner;
 namespace kiri {
-struct TabLabel { std::string name,tooltip; bool dirty=false; int64 id=0; std::shared_ptr<const BBitmap> icon;bool preview=false; };
+// revealable: the tab's file is inside the project, so Reveal applies.
+struct TabLabel { std::string name,tooltip; bool dirty=false; int64 id=0; std::shared_ptr<const BBitmap> icon;bool preview=false,revealable=false; };
 struct TabActions {
-    uint32 select=kSelectTab,close=kCloseTab,closeAll=kCloseAllTabs,closeOthers=kCloseOtherTabs,create=0;
+    uint32 select=kSelectTab,close=kCloseTab,closeAll=kCloseAllTabs,closeOthers=kCloseOtherTabs,create=0,reveal=0;
 };
 class TabStrip:public BView {
 public:

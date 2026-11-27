@@ -168,7 +168,9 @@ void TabStrip::ContextMenu(BPoint where,int index) {
     };
     if(fPane) {
         add("Keep Open",kKeepTab)->SetEnabled(fTabs[index].preview);
-        add("Split Right",kSplitRight);add("Split Down",kSplitDown);menu.AddSeparatorItem();
+        add("Split Right",kSplitRight);add("Split Down",kSplitDown);
+        if(fActions.reveal) add("Reveal in Files",fActions.reveal)->SetEnabled(fTabs[index].revealable);
+        menu.AddSeparatorItem();
         add("Close",fActions.close);
     }
     add("Close all",fActions.closeAll);

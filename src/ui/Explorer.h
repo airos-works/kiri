@@ -27,15 +27,26 @@ public:
     const Theme& Colors() const { return fTheme; }
     void Clear();
     void SetRoot(const std::string& path,const DirectoryResult& listing);
+    // Updates only the listed folder's rows: unchanged rows (and their
+    // expansion and loaded descendants) are kept, removed ones deleted and
+    // new ones inserted in place. Selection and scroll position stay.
     void AddListing(const std::string& parent,const DirectoryResult& listing);
     void CheckExpanded();
+    // Expands the ancestors of a file inside the root (listing them first if
+    // needed), selects its row and scrolls to it. False outside the root.
+    bool Reveal(const std::string& path);
     std::vector<std::string> LoadedDirectories() const;
     std::function<void(std::string)> requestDirectory;
 private:
     void OpenSelected(bool preview=false);
     void AddEntries(const DirectoryResult& listing,FileItem* parent);
+    void UpdateChildren(FileItem* parent,const DirectoryResult& listing);
+    void RemoveBranch(FileItem* item);
+    FileItem* FindItem(const std::string& path,bool directory) const;
+    void CheckExpanded(FileItem* item);
+    void ContinueReveal();
     void ClearItems();
-    void Rebuild();
+    std::string fReveal; // a file being revealed while its folders are listed
     std::string fRoot;
     std::map<std::string,DirectoryResult> fListings;
     std::set<std::string> fExpanded;

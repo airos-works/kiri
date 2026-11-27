@@ -29,6 +29,7 @@ public:
     void MessageReceived(BMessage* message) override;
     bool QuitRequested() override;
     void WindowActivated(bool active) override;
+    void MenusBeginning() override;
     void OpenProject(const std::string& path);
     // line 0 opens or activates the file where it is; a line (and column,
     // counted from 1) is an explicit jump.
@@ -116,6 +117,10 @@ private:
     void CollectPanes(LayoutNode& node,std::vector<Pane*>& panes);
     BMenuBar* BuildMenus();
     void UpdateTabs();
+    bool InProject(const std::string& path) const;
+    // Shows the current document's row in the Files pane, expanding only its
+    // folders; the editor keeps its caret and focus.
+    void RevealActiveFile();
     void UpdateStatus();
     void SelectTab(int index);
     bool CloseTab(int index);
@@ -277,6 +282,7 @@ private:
     std::set<std::string> fPendingOpen;
     int fResolvingOpens=0; // opens whose path and size are being read on a worker
     bool fConfigBatchPending=false; // a pulse's EditorConfig check is running
+    std::map<std::string,bool> fListingsInFlight; // folder → asked again meanwhile
     std::shared_ptr<ProjectIndex> fIndex=std::make_shared<ProjectIndex>();
     std::shared_ptr<ProjectIndexSlot> fIndexSlot=std::make_shared<ProjectIndexSlot>();
     std::string fProject,fGitRoot,fSettings;

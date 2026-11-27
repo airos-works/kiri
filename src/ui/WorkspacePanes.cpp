@@ -21,7 +21,7 @@ namespace kiri {
 BView* Workspace::LayoutNode::View() const { return pane?pane->panel:split; }
 Workspace::Pane* Workspace::CreatePane() {
     auto pane=std::make_unique<Pane>();pane->id=fNextPane++;
-    pane->strip=new TabStrip("documents",{kSelectTab,kCloseTab,kCloseAllTabs,kCloseOtherTabs,kNewFile},"New file");pane->strip->SetPane(pane->id);
+    pane->strip=new TabStrip("documents",{kSelectTab,kCloseTab,kCloseAllTabs,kCloseOtherTabs,kNewFile,kRevealFile},"New file");pane->strip->SetPane(pane->id);
     auto* host=new BView("document host",0);pane->cards=new BCardLayout();host->SetLayout(pane->cards);
     auto* welcome=new BView("welcome",B_WILL_DRAW);
     BLayoutBuilder::Group<>(welcome,B_VERTICAL,12).SetInsets(12).AddGlue()
@@ -109,7 +109,7 @@ void Workspace::UpdateTabs() {
     for(auto& pane:fPanes) {
         std::vector<TabLabel> labels;
         for(auto& tab:pane->tabs) if(auto* d=ByID(tab->document))
-            labels.push_back({d->name+(d->external?" !":""),d->path+(tab->preview?" · Preview — double-click to keep open":""),tab->editor && tab->editor->Dirty(),tab->id,FileIcon(d->path.empty()?d->name:d->path),tab->preview});
+            labels.push_back({d->name+(d->external?" !":""),d->path+(tab->preview?" · Preview — double-click to keep open":""),tab->editor && tab->editor->Dirty(),tab->id,FileIcon(d->path.empty()?d->name:d->path),tab->preview,InProject(d->path)});
         pane->strip->SetTabs(std::move(labels),pane->selected);pane->strip->SetActive(pane.get()==fActivePane);
     }
     for(auto& pane:fPanes) for(auto& tab:pane->tabs) if(auto* preview=dynamic_cast<MarkdownPane*>(tab->view)) {preview->SetPath(ByID(tab->document)->path);preview->Refresh();}

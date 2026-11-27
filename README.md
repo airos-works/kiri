@@ -190,7 +190,7 @@ for project-local versions, other languages, configuration and limits.
 Haiku's default Command modifier is **Alt**. Menus show configured shortcuts:
 Alt+P opens files quickly, Alt+F opens find/replace (seeded with a one-line selection),
 Alt+E and Alt+Shift+E find the next and previous match, Alt+Shift+F searches the project,
-Alt+G goes to a line, Alt+S saves, Alt+Shift+T opens a terminal, and Alt+W closes
+Alt+G goes to a line, Alt+J reveals the active file in the Files pane, Alt+S saves, Alt+Shift+T opens a terminal, and Alt+W closes
 the focused terminal or document tab. In the find bar,
 Enter in the replacement field replaces one match; **All** replaces every match
 as one undo action. Regex captures, whole-word matching, selection scope,
