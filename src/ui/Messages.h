@@ -6,6 +6,7 @@ constexpr uint32 kDocumentSettings='dcst',kApplyDocumentSettings='dcap',kEditing
 constexpr uint32 kWindowTheme='wthm',kThemeLibraryChanged='thlb';
 constexpr uint32 kPasteVerbatim='pstv'; // Paste Without Reindenting
 constexpr uint32 kRevealFile='rvlf'; // Reveal Active File in the Files pane
+constexpr uint32 kNavigateBack='nvbk',kNavigateForward='nvfw';
 constexpr uint32 kToggleProblems='prob',kNextProblem='pbnx',kPreviousProblem='pbpr',kJumpProblem='pbgo',kRestartLanguages='lgrs';
 constexpr uint32 kExternalTick='exck',kExternalCompare='excp',kExternalReload='exrl',kExternalKeep='exkp',kExternalBackups='exbk',kProjectUpdated='prup';
 constexpr uint32 kFindChanged='fsch',kFindScope='fscp',kFindHistory='fhst',kFindRefresh='frsh';

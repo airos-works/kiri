@@ -152,7 +152,7 @@ void Workspace::UpdateProblems() {
 }
 void Workspace::JumpProblem(int64 id,int64 serial,size_t index) {
     auto* d=ByID(id);if(!d || !d->editor || d->diagnosticSerial!=serial || d->analysisRevision!=d->editor->InputRevision() || index>=d->diagnostics.size()) return;
-    auto problem=d->diagnostics[index];
+    auto problem=d->diagnostics[index];RecordJump();
     fModeLayout->SetVisibleItem(int32(0));ShowDocument(*fActivePane,*d,1,1,false,true,true);
     auto* editor=Current()->editor;editor->SendMessage(SCI_ENSUREVISIBLEENFORCEPOLICY,editor->SendMessage(SCI_LINEFROMPOSITION,problem.start));editor->SendMessage(SCI_SETSEL,problem.start,problem.end);editor->SendMessage(SCI_SCROLLCARET);editor->MakeFocus();editor->ShowDiagnostic(problem.start);
     fProblemDocument=id;fProblemSerial=serial;fProblemIndex=index;fProblems->SelectProblem(id,serial,index);

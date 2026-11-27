@@ -41,6 +41,7 @@
 #include <TextView.h>
 #include <TranslationUtils.h>
 #include <algorithm>
+#include <optional>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -321,6 +322,46 @@ Workspace::~Workspace() {
     // the queue pointer valid until those workers have returned.
     if(fJobs) fJobs->StopAndWait();fJobs.reset();
 }
+void Workspace::RecordJump() {
+    if(fNavigating) return;
+    auto* tab=CurrentTab();auto* d=Current();if(!tab || !d || !tab->editor) return;
+    Location here{d->id,fActivePane->id,d->path,tab->editor->SendMessage(SCI_GETCURRENTPOS),tab->editor->SendMessage(SCI_GETANCHOR),tab->editor->SendMessage(SCI_GETFIRSTVISIBLELINE)};
+    if(!fBack.empty() && fBack.back().document==here.document && fBack.back().caret==here.caret && fBack.back().anchor==here.anchor) return;
+    fBack.push_back(std::move(here));if(fBack.size()>100) fBack.pop_front();
+    fForward.clear(); // a new jump ends the old forward branch
+}
+bool Workspace::GoToLocation(const Location& location) {
+    // The same document if it is still open, else the file at that path.
+    Document* d=ByID(location.document);if(d && d->path!=location.path) d=nullptr;
+    if(!d && !location.path.empty()) for(auto& document:fDocuments) if(document->path==location.path) d=document.get();
+    auto* pane=FindPane(location.pane);if(!pane) pane=fActivePane;
+    auto restore=[this,location](Editor* editor) {
+        if(!editor) return;auto length=editor->SendMessage(SCI_GETLENGTH);
+        editor->SendMessage(SCI_SETSEL,std::min<int64>(location.anchor,length),std::min<int64>(location.caret,length));
+        editor->SendMessage(SCI_SETFIRSTVISIBLELINE,location.firstLine);editor->MakeFocus();
+    };
+    fNavigating=true;
+    if(d) { ShowDocument(*pane,*d,0,0,false,true,true);restore(CurrentTab()?CurrentTab()->editor:nullptr);fNavigating=false;return true; }
+    if(location.path.empty()) { fNavigating=false;return false; } // a closed untitled document
+    auto paneID=pane->id;
+    fPendingRequests[location.path].push_back([this,location,paneID,restore] {
+        auto* pane=FindPane(paneID);if(!pane) return;
+        for(auto& tab:pane->tabs) if(auto* document=ByID(tab->document);document && document->path==location.path) { restore(tab->editor);return; }
+    });
+    OpenFile(location.path,0,0,true,false,paneID);fNavigating=false;return true;
+}
+void Workspace::Navigate(int direction) {
+    auto& from=direction<0?fBack:fForward;auto& to=direction<0?fForward:fBack;
+    if(from.empty()) { Notice(direction<0?"No earlier location.":"No later location.");return; }
+    auto* tab=CurrentTab();auto* d=Current();
+    std::optional<Location> here;
+    if(tab && d && tab->editor) here=Location{d->id,fActivePane->id,d->path,tab->editor->SendMessage(SCI_GETCURRENTPOS),tab->editor->SendMessage(SCI_GETANCHOR),tab->editor->SendMessage(SCI_GETFIRSTVISIBLELINE)};
+    while(!from.empty()) {
+        auto target=from.back();from.pop_back();
+        if(GoToLocation(target)) { if(here) to.push_back(*here);return; }
+    }
+    Notice("The earlier locations are no longer available.");
+}
 bool Workspace::InProject(const std::string& path) const {
     if(path.empty() || fProject.empty() || path.size()<=fProject.size() || path.compare(0,fProject.size(),fProject)!=0) return false;
     return fProject.back()=='/' || path[fProject.size()]=='/';
@@ -360,7 +401,7 @@ BMenuBar* Workspace::BuildMenus() {
     add(view,"Markdown Preview",kMarkdownPreview,'V',B_SHIFT_KEY);add(view,"Focus Markdown Preview",kMarkdownFocus,'V',B_CONTROL_KEY);view->AddSeparatorItem();
     fThemes=ThemeMenu("Color Theme",kTheme,0);fThemes->SetLabelFromMarked(false);
     view->AddItem(fThemes);add(view,"Zoom In",kZoomIn,'+');add(view,"Zoom Out",kZoomOut,'-');add(view,"Word Wrap",kWrap);add(view,"Show Whitespace",kShowWhitespace);bar->AddItem(view);
-    auto* search=new BMenu("Search");add(search,"Find / Replace",kFind,'F');add(search,"Find Next",kFindNext,'E');add(search,"Find Previous",kFindPrevious,'E',B_SHIFT_KEY);add(search,"Open Quickly…",kQuickOpen,'P');add(search,"Search Project…",kProjectSearch,'F',B_SHIFT_KEY);add(search,"Go to Line…",kGoToLine,'G');add(search,"Go to Symbol…",kBrowseSymbols,'R',B_SHIFT_KEY);search->AddSeparatorItem();add(search,"Next Problem",kNextProblem);add(search,"Previous Problem",kPreviousProblem);add(search,"Restart Language Servers",kRestartLanguages);search->AddSeparatorItem();add(search,"Compare External Changes…",kExternalCompare);add(search,"Open External Backups…",kExternalBackups);bar->AddItem(search);
+    auto* search=new BMenu("Search");add(search,"Find / Replace",kFind,'F');add(search,"Find Next",kFindNext,'E');add(search,"Find Previous",kFindPrevious,'E',B_SHIFT_KEY);add(search,"Open Quickly…",kQuickOpen,'P');add(search,"Search Project…",kProjectSearch,'F',B_SHIFT_KEY);add(search,"Go to Line…",kGoToLine,'G');add(search,"Go to Symbol…",kBrowseSymbols,'R',B_SHIFT_KEY);add(search,"Back",kNavigateBack,'[');add(search,"Forward",kNavigateForward,']');search->AddSeparatorItem();add(search,"Next Problem",kNextProblem);add(search,"Previous Problem",kPreviousProblem);add(search,"Restart Language Servers",kRestartLanguages);search->AddSeparatorItem();add(search,"Compare External Changes…",kExternalCompare);add(search,"Open External Backups…",kExternalBackups);bar->AddItem(search);
     auto* git=new BMenu("Git");add(git,"Show Source Control",kToggleGit);add(git,"File History",kFileHistory);add(git,"Copy GitHub Permalink",kCopyPermalink,'L',B_SHIFT_KEY);git->AddSeparatorItem();add(git,"Refresh",kGitRefresh);add(git,"Fetch",kGitFetch);add(git,"Pull (Fast-forward Only)",kGitPull);add(git,"Push",kGitPush);bar->AddItem(git);
     auto* term=new BMenu("Terminal");add(term,"New Terminal",kNewTerminal,'T',B_SHIFT_KEY);add(term,"Close Terminal",kCloseTerminal);term->AddSeparatorItem();add(term,"Show / Hide",kToggleTerminal);bar->AddItem(term);
     return bar;
@@ -499,6 +540,7 @@ void Workspace::OpenFile(const std::string& input,size_t line,size_t column,bool
     auto* pane=paneID?FindPane(paneID):fActivePane;if(!pane) return;paneID=pane->id;
     if(fRestoring && fRestoringDrafts) { if(std::find(fRestorePaths.begin(),fRestorePaths.end(),input)==fRestorePaths.end()) fRestorePaths.push_back(input);return; }
     preview=preview && fPreviewTabs;PromotePreviews();
+    if(activate && !preview) RecordJump();
     auto paneSerial=++pane->openSerial;auto focus=activate?++fFocusSerial:0;
     // Activating an open document by its own path reads no metadata.
     for(auto& document:fDocuments) if(document->path==input) { ActivateOpen(*pane,*document,line,column,activate,preview,focusEditor);return; }
@@ -968,7 +1010,7 @@ void Workspace::MessageReceived(BMessage* message) {
             auto* selected=ByID(document);
             if(selected && selected==d && selected->editor && selected->symbolVersion==version && !selected->languageDirty
                     && symbol>=0 && symbol<static_cast<int32>(selected->symbols.size()) && selected->editor->Matches(selected->serverText)) {
-                auto offset=selected->symbols[symbol].selection;CancelCompletion();
+                auto offset=selected->symbols[symbol].selection;CancelCompletion();RecordJump();
                 ++fFocusSerial;fModeLayout->SetVisibleItem(int32(0));
                 auto line=editor->SendMessage(SCI_LINEFROMPOSITION,offset);editor->SendMessage(SCI_ENSUREVISIBLEENFORCEPOLICY,line);
                 editor->SendMessage(SCI_GOTOPOS,offset);editor->SendMessage(SCI_SCROLLCARET);editor->MakeFocus();
@@ -1082,6 +1124,8 @@ void Workspace::MessageReceived(BMessage* message) {
             } else if(focus) focus->MessageReceived(message);
             break;
         }
+        case kNavigateBack:Navigate(-1);break;
+        case kNavigateForward:Navigate(1);break;
         case kRevealFile:
             if(message->HasInt64("tab_id")) SelectTab(tabIndex());
             RevealActiveFile();break;
@@ -1180,7 +1224,7 @@ void Workspace::MessageReceived(BMessage* message) {
             const char* value;if(editor && message->FindString("value",&value)==B_OK) {
                 auto location=ParseLineColumn(value);
                 if(!location) Notice(std::string("Go to Line: enter a line number or line:column, such as 12 or 12:5 (not \"")+value+"\").");
-                else editor->GoToVisualColumn(location->line,location->column);
+                else { RecordJump();editor->GoToVisualColumn(location->line,location->column); }
             }
             break;
         }

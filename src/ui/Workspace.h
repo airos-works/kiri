@@ -214,6 +214,12 @@ private:
     void AnalysisTick();
     void UpdateProblems();
     void JumpProblem(int64 document,int64 serial,size_t index);
+    // Back / Forward over deliberate jumps (opening another file, search
+    // results, Go to Line, symbols, problems), not every caret movement.
+    struct Location { int64 document=0,pane=0;std::string path;int64 caret=0,anchor=0,firstLine=0; };
+    void RecordJump();
+    void Navigate(int direction);
+    bool GoToLocation(const Location& location);
     void NavigateProblem(int direction);
     void Complete(Editor* source,bool manual=true,int character=0);
     void AcceptCompletion(Editor* source,const std::string& label);
@@ -265,6 +271,8 @@ private:
     ProblemsView* fProblems=nullptr;
     int fLanguageVersion=0;
     int64 fProblemDocument=0,fProblemSerial=-1;size_t fProblemIndex=0; // the last problem jumped to
+    std::deque<Location> fBack,fForward;
+    bool fNavigating=false;
     bool fProblemsDirty=true;
     struct Snapshot { int64 id,revision;size_t total,offset=0;std::shared_ptr<Draft> draft; };
     std::unique_ptr<Snapshot> fSnapshot;
